@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { Router, type Request } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { z } from 'zod';
 
 import { CostAnalyzerService } from '@/services/cost-analyzer';
@@ -40,6 +40,14 @@ const consumeStaticRequestAllowance = (request: Request): boolean => {
 
   entry.count += 1;
   return true;
+};
+
+const staticRateLimit = (request: Request, response: Response, next: NextFunction): void => {
+  if (!consumeStaticRequestAllowance(request)) {
+    response.status(429).json({ error: 'Too many requests for dashboard assets' });
+    return;
+  }
+  next();
 };
 
 /**
@@ -105,12 +113,7 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
     }
   });
 
-  router.get('*', (request, response) => {
-    if (!consumeStaticRequestAllowance(request)) {
-      response.status(429).json({ error: 'Too many requests for dashboard assets' });
-      return;
-    }
-
+  router.get('*', staticRateLimit, (_request, response) => {
     response.sendFile(path.join(dependencies.publicDir, 'index.html'));
   });
 
