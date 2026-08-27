@@ -18,11 +18,14 @@
     "CONTRIBUTING.md"
   ],
   "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/dashboard/public',{recursive:true}); fs.copyFileSync('src/dashboard/public/index.html','dist/dashboard/public/index.html');\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --ext .ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:e2e": "npm run build && vitest run tests/e2e/cli-binary.test.ts",
+    "prepack": "npm run build",
     "start": "node dist/cli/index.js"
   },
   "dependencies": {

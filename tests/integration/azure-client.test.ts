@@ -47,6 +47,13 @@ describe('AzureClientService', () => {
     expect(ManagedIdentityCredential).toHaveBeenCalledWith({ clientId: validEnv.AZURE_CLIENT_ID });
   });
 
+  it('creates managed-identity credentials without AZURE_CLIENT_ID', () => {
+    const envWithoutClientId = { ...validEnv, AUTH_METHOD: 'managed-identity' as const, AZURE_CLIENT_ID: undefined };
+    const service = new AzureClientService(envWithoutClientId);
+    expect(service.getCredential()).toEqual({ kind: 'managed-identity' });
+    expect(ManagedIdentityCredential).toHaveBeenCalledWith(undefined);
+  });
+
   it('caches credentials by auth configuration', () => {
     const service = new AzureClientService(validEnv);
     const first = service.getCredential();
@@ -83,5 +90,17 @@ describe('AzureClientService', () => {
       return 'ok';
     });
     expect(result).toBe('ok');
+  });
+
+  it('exhausts all retry attempts and rethrows the last error', async () => {
+    const service = new AzureClientService(validEnv, { sleep: async () => undefined, maxAttempts: 3 });
+    let attempts = 0;
+    await expect(
+      service.executeWithRetry(async () => {
+        attempts += 1;
+        throw new AzureApiError(`attempt ${attempts}`, 503);
+      }),
+    ).rejects.toThrow(AzureApiError);
+    expect(attempts).toBe(3);
   });
 });
