@@ -42,16 +42,24 @@ const startDashboardServerMock = vi.hoisted(() =>
 vi.mock('ora', () => ({ default: vi.fn(() => spinner) }));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
 vi.mock('@/services/azure-client', () => ({
-  AzureClientService: vi.fn(() => azureClientMock),
+  AzureClientService: vi.fn(function () {
+    return azureClientMock;
+  }),
 }));
 vi.mock('@/services/cost-analyzer', () => ({
-  CostAnalyzerService: vi.fn(() => costAnalyzerMock),
+  CostAnalyzerService: vi.fn(function () {
+    return costAnalyzerMock;
+  }),
 }));
 vi.mock('@/services/resource-detector', () => ({
-  ResourceDetectorService: vi.fn(() => resourceDetectorMock),
+  ResourceDetectorService: vi.fn(function () {
+    return resourceDetectorMock;
+  }),
 }));
 vi.mock('@/services/optimizer', () => ({
-  OptimizerService: vi.fn(() => optimizerMock),
+  OptimizerService: vi.fn(function () {
+    return optimizerMock;
+  }),
 }));
 vi.mock('@/dashboard/server', () => ({
   startDashboardServer: startDashboardServerMock,

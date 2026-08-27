@@ -12,31 +12,43 @@ const publicIpListAllMock = vi.fn();
 const loadBalancersListAllMock = vi.fn();
 
 vi.mock('@azure/arm-monitor', () => ({
-  MonitorClient: vi.fn(() => ({ metrics: { list: metricsListMock } })),
+  MonitorClient: vi.fn(function () {
+    return { metrics: { list: metricsListMock } };
+  }),
 }));
 vi.mock('@azure/arm-compute', () => ({
-  ComputeManagementClient: vi.fn(() => ({
-    virtualMachines: { listAll: vmListAllMock },
-    disks: { list: disksListMock },
-  })),
+  ComputeManagementClient: vi.fn(function () {
+    return {
+      virtualMachines: { listAll: vmListAllMock },
+      disks: { list: disksListMock },
+    };
+  }),
 }));
 vi.mock('@azure/arm-network', () => ({
-  NetworkManagementClient: vi.fn(() => ({
-    publicIPAddresses: { listAll: publicIpListAllMock },
-    loadBalancers: { listAll: loadBalancersListAllMock },
-  })),
+  NetworkManagementClient: vi.fn(function () {
+    return {
+      publicIPAddresses: { listAll: publicIpListAllMock },
+      loadBalancers: { listAll: loadBalancersListAllMock },
+    };
+  }),
 }));
 vi.mock('@azure/arm-storage', () => ({
-  StorageManagementClient: vi.fn(() => ({ storageAccounts: { list: storageListMock } })),
+  StorageManagementClient: vi.fn(function () {
+    return { storageAccounts: { list: storageListMock } };
+  }),
 }));
 vi.mock('@azure/arm-sql', () => ({
-  SqlManagementClient: vi.fn(() => ({
-    servers: { list: sqlServersListMock },
-    databases: { listByServer: sqlDatabasesListByServerMock },
-  })),
+  SqlManagementClient: vi.fn(function () {
+    return {
+      servers: { list: sqlServersListMock },
+      databases: { listByServer: sqlDatabasesListByServerMock },
+    };
+  }),
 }));
 vi.mock('@azure/arm-appservice', () => ({
-  WebSiteManagementClient: vi.fn(() => ({ webApps: { list: webAppsListMock } })),
+  WebSiteManagementClient: vi.fn(function () {
+    return { webApps: { list: webAppsListMock } };
+  }),
 }));
 
 const iterable = <T>(items: T[]): AsyncIterable<T> => ({

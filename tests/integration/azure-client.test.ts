@@ -9,9 +9,15 @@ import { AzureApiError, AzureAuthError } from '@/utils/errors';
 import { validEnv } from '../fixtures/mock-data';
 
 vi.mock('@azure/identity', () => ({
-  DefaultAzureCredential: vi.fn(() => ({ kind: 'default' })),
-  ClientSecretCredential: vi.fn(() => ({ kind: 'client-secret' })),
-  ManagedIdentityCredential: vi.fn(() => ({ kind: 'managed-identity' })),
+  DefaultAzureCredential: vi.fn(function () {
+    return { kind: 'default' };
+  }),
+  ClientSecretCredential: vi.fn(function () {
+    return { kind: 'client-secret' };
+  }),
+  ManagedIdentityCredential: vi.fn(function () {
+    return { kind: 'managed-identity' };
+  }),
 }));
 
 describe('AzureClientService', () => {
@@ -59,7 +65,7 @@ describe('AzureClientService', () => {
   });
 
   it('wraps credential creation errors', () => {
-    vi.mocked(DefaultAzureCredential).mockImplementationOnce(() => {
+    vi.mocked(DefaultAzureCredential).mockImplementationOnce(function () {
       throw new Error('bad auth');
     });
     const service = new AzureClientService({ ...validEnv, AUTH_METHOD: 'cli' });

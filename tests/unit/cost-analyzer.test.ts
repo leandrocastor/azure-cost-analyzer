@@ -7,11 +7,13 @@ import { mockCostEntries } from '../fixtures/mock-data';
 const usageMock = vi.fn();
 
 vi.mock('@azure/arm-costmanagement', () => ({
-  CostManagementClient: vi.fn(() => ({
-    query: {
-      usage: usageMock,
-    },
-  })),
+  CostManagementClient: vi.fn(function () {
+    return {
+      query: {
+        usage: usageMock,
+      },
+    };
+  }),
 }));
 
 describe('CostAnalyzerService', () => {
