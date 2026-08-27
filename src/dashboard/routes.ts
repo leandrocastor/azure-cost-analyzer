@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 
@@ -21,18 +23,6 @@ export type DashboardDependencies = {
 const staticWindowMs = 60_000;
 const staticMaxRequests = 120;
 const staticRequestCounts = new Map<string, { count: number; resetAt: number }>();
-const fallbackHtml = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Azure Cost Analyzer Dashboard</title>
-  </head>
-  <body>
-    <h1>Azure Cost Analyzer Dashboard</h1>
-    <p>Dashboard frontend placeholder. Open <code>/index.html</code> for the static asset.</p>
-  </body>
-</html>`;
 
 const consumeStaticRequestAllowance = (request: Request): boolean => {
   const key = request.ip || request.socket.remoteAddress || 'unknown';
@@ -121,7 +111,7 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
       return;
     }
 
-    response.status(200).type('html').send(fallbackHtml);
+    response.sendFile(path.join(dependencies.publicDir, 'index.html'));
   });
 
   return router;

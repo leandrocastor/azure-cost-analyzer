@@ -44,6 +44,14 @@ describe('CLI dispatcher', () => {
     consoleSpy.mockRestore();
   });
 
+  it.each(['--version', '-v'])('prints version for %s', async (flag) => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await runCli([flag]);
+    expect(consoleSpy).toHaveBeenCalledOnce();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\d+\.\d+\.\d+$/));
+    consoleSpy.mockRestore();
+  });
+
   it('throws for unknown commands', async () => {
     await expect(runCli(['missing'])).rejects.toThrow('Unknown command: missing');
   });
