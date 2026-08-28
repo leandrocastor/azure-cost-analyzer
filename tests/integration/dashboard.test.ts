@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 
 import request from 'supertest';
 
-import { createDashboardApp, startDashboardServer } from '@/dashboard/server';
+import { createDashboardApp, errorToMessage, startDashboardServer } from '@/dashboard/server';
 import { resetConfig } from '@/config';
 import {
   mockCostSummary,
@@ -82,6 +82,14 @@ describe('dashboard routes', () => {
   it('validates invalid costs query parameters', async () => {
     const response = await request(app).get('/api/costs?period=99');
     expect(response.status).toBe(500);
+    expect(response.body.error).toContain('"period"');
+  });
+
+  it('normalizes non-Error values with errorToMessage', () => {
+    const nonErrorValue = [{ code: 'invalid_period', path: ['period'] }];
+    expect(errorToMessage(nonErrorValue)).toBe(JSON.stringify(nonErrorValue));
+    expect(errorToMessage('plain error')).toBe('plain error');
+    expect(errorToMessage(null)).toBe('Unknown error');
   });
 
   it('returns JSON error body from the error handler', async () => {
