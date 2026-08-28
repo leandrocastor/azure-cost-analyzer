@@ -13,29 +13,127 @@
         padding: 3rem;
       }
       .card {
-        max-width: 800px;
+        max-width: 960px;
         margin: 0 auto;
         background: #1e293b;
         border-radius: 16px;
         padding: 2rem;
         box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
       }
+      .kpis {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      }
+      .kpi {
+        background: #0f172a;
+        border-radius: 12px;
+        padding: 1rem;
+      }
+      .kpi strong {
+        font-size: 1.2rem;
+      }
+      .charts {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        margin-top: 1.5rem;
+      }
+      .bar-row {
+        display: grid;
+        grid-template-columns: 120px 1fr 52px;
+        gap: 0.5rem;
+        align-items: center;
+        margin-bottom: 0.5rem;
+      }
+      .bar-label {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .bar-track {
+        background: #334155;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 8px;
+        background: #38bdf8;
+      }
+      .recs {
+        display: grid;
+        gap: 0.75rem;
+        margin-top: 1rem;
+      }
+      .rec-item {
+        display: grid;
+        gap: 0.25rem;
+        background: #0f172a;
+        border-radius: 12px;
+        padding: 0.9rem;
+      }
+      .pills {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .pill {
+        padding: 0.1rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        background: #334155;
+      }
+      .risk-low,
+      .effort-low {
+        background: #14532d;
+      }
+      .risk-medium,
+      .effort-medium {
+        background: #92400e;
+      }
+      .risk-high,
+      .effort-high {
+        background: #7f1d1d;
+      }
       code {
         color: #38bdf8;
+      }
+      .muted {
+        color: #94a3b8;
       }
     </style>
   </head>
   <body>
     <div class="card">
       <h1>Azure Cost Analyzer Dashboard</h1>
-      <p>The enterprise dashboard API is running. Connect your frontend to:</p>
+      <p class="muted">Dashboard frontend placeholder turned into a lightweight SPA.</p>
+      <div class="kpis">
+        <div class="kpi">Total Cost<br /><strong id="kpi-cost">-</strong></div>
+        <div class="kpi">Idle Resources<br /><strong id="kpi-idle">-</strong></div>
+        <div class="kpi">Recommendations<br /><strong id="kpi-recs">-</strong></div>
+        <div class="kpi">Annual Savings<br /><strong id="kpi-savings">-</strong></div>
+      </div>
+      <div class="charts">
+        <div>
+          <h2>Cost by Service</h2>
+          <div id="chart-costs"></div>
+        </div>
+        <div>
+          <h2>Idle by Resource Type</h2>
+          <div id="chart-idle"></div>
+        </div>
+      </div>
+      <h2>Recommendations</h2>
+      <div id="recs-list" class="recs"></div>
+      <p>The enterprise dashboard API is running. Available endpoints:</p>
       <ul>
         <li><code>/api/costs</code></li>
         <li><code>/api/resources/idle</code></li>
         <li><code>/api/recommendations</code></li>
         <li><code>/api/summary</code></li>
       </ul>
-      <p>Replace this placeholder with your preferred SPA or BI frontend.</p>
+      <p class="muted">If data loading fails, verify backend credentials and API availability.</p>
     </div>
+    <script src="./dashboard.js"></script>
   </body>
 </html>

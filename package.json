@@ -18,7 +18,7 @@
     "CONTRIBUTING.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/dashboard/public',{recursive:true}); fs.copyFileSync('src/dashboard/public/index.html','dist/dashboard/public/index.html');\"",
+    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json && node -e \"const fs=require('node:fs'); fs.mkdirSync('dist/dashboard/public',{recursive:true}); fs.copyFileSync('src/dashboard/public/index.html','dist/dashboard/public/index.html'); fs.copyFileSync('src/dashboard/public/dashboard.js','dist/dashboard/public/dashboard.js');\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --ext .ts",
     "test": "vitest run",
