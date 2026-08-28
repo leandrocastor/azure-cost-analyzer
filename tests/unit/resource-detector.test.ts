@@ -63,6 +63,7 @@ describe('ResourceDetectorService', () => {
   const azureClient = {
     getCredential: vi.fn(() => ({ token: 'credential' })),
     getSubscriptionId: vi.fn(() => 'sub-id'),
+    isMockMode: vi.fn(() => false),
     executeWithRetry: vi.fn(async <T>(operation: () => Promise<T>) => operation()),
   };
 
@@ -84,6 +85,14 @@ describe('ResourceDetectorService', () => {
     const service = new ResourceDetectorService(azureClient as never);
     const items = await service.detectIdleVMs();
     expect(items).toHaveLength(1);
+  });
+
+  it('uses local mock dataset when DATA_MODE=mock', async () => {
+    azureClient.isMockMode.mockReturnValueOnce(true);
+    const service = new ResourceDetectorService(azureClient as never);
+    const items = await service.detectAll();
+    expect(items).toHaveLength(2);
+    expect(metricsListMock).not.toHaveBeenCalled();
   });
 
   it('detects idle app services', async () => {

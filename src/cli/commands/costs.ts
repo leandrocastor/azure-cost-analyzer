@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import { Command, Flags } from '@oclif/core';
 import chalk from 'chalk';
-import Table from 'cli-table3';
+import CliTable from 'cli-table3';
 
 import { AzureClientService } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
@@ -90,7 +90,7 @@ export default class CostsCommand extends Command {
       return renderCsv(summary);
     }
 
-    const table = new Table({
+    const table = new CliTable({
       head: [chalk.cyan('Dimension'), chalk.cyan('Name'), chalk.cyan('Cost')],
     });
 

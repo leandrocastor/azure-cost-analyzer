@@ -26,6 +26,7 @@ describe('config', () => {
 
   it.each([
     ['AZURE_SUBSCRIPTION_ID', 'not-a-uuid'],
+    ['DATA_MODE', 'unsupported'],
     ['AUTH_METHOD', 'unsupported'],
     ['LOG_LEVEL', 'trace'],
     ['LOG_FORMAT', 'yaml'],
@@ -42,6 +43,21 @@ describe('config', () => {
     'AZURE_CLIENT_SECRET',
   ])('requires %s for service principal auth', (key) => {
     const env = { ...validEnv, [key]: undefined };
+    expect(() => loadConfig(env)).toThrow(ConfigurationError);
+  });
+
+  it('allows mock mode without Azure credentials', () => {
+    const config = loadConfig({
+      DATA_MODE: 'mock',
+      AUTH_METHOD: 'cli',
+      NODE_ENV: 'test',
+    });
+    expect(config.DATA_MODE).toBe('mock');
+    expect(config.AZURE_SUBSCRIPTION_ID).toBeUndefined();
+  });
+
+  it('requires subscription id when DATA_MODE=azure', () => {
+    const env = { ...validEnv, AZURE_SUBSCRIPTION_ID: undefined, DATA_MODE: 'azure' as const };
     expect(() => loadConfig(env)).toThrow(ConfigurationError);
   });
 

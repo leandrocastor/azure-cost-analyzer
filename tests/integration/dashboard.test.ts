@@ -71,6 +71,8 @@ describe('dashboard routes', () => {
     const response = await request(app).get('/api/summary');
     expect(response.status).toBe(200);
     expect(response.body.idleResourceCount).toBe(2);
+    expect(response.body).toHaveProperty('costVariationPercent');
+    expect(response.body.topResources).toBeInstanceOf(Array);
   });
 
   it('serves the dashboard frontend', async () => {

@@ -20,6 +20,7 @@ describe('CostAnalyzerService', () => {
   const azureClient = {
     getCredential: vi.fn(() => ({ token: 'credential' })),
     getSubscriptionId: vi.fn(() => '11111111-1111-1111-1111-111111111111'),
+    isMockMode: vi.fn(() => false),
     executeWithRetry: vi.fn(async <T>(operation: () => Promise<T>) => operation()),
   };
 
@@ -27,6 +28,7 @@ describe('CostAnalyzerService', () => {
     usageMock.mockReset();
     azureClient.getCredential.mockClear();
     azureClient.getSubscriptionId.mockClear();
+    azureClient.isMockMode.mockClear();
     azureClient.executeWithRetry.mockClear();
   });
 
@@ -42,6 +44,14 @@ describe('CostAnalyzerService', () => {
     const summary = await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
     expect(summary.totalAmount).toBe(150);
     expect(summary.byService).toEqual({ Compute: 100, Storage: 50 });
+  });
+
+  it('uses local mock dataset when DATA_MODE=mock', async () => {
+    azureClient.isMockMode.mockReturnValueOnce(true);
+    const service = new CostAnalyzerService(azureClient as never);
+    const summary = await service.queryCosts('sub', '2026-01-01', '2026-03-31', 'service');
+    expect(summary.totalAmount).toBe(1105);
+    expect(usageMock).not.toHaveBeenCalled();
   });
 
   it('caches query results', async () => {

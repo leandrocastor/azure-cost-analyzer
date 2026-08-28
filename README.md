@@ -1,81 +1,168 @@
 # Azure Cost Analyzer
 
-Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powered dashboard for cost visibility, anomaly detection, idle resource discovery, and optimization recommendations.
+O **Azure Cost Analyzer** é uma solução em **TypeScript** para análise de custos no Azure, com:
 
-## Features
+- **CLI** para análises e exportação de relatórios
+- **dashboard** via **Express** para visualização rápida de KPIs
+- foco em qualidade com **ESLint**, **Prettier**, **Vitest**, **TypeScript** e **GitHub Actions**
 
-- Azure Cost Management aggregation by service, resource group, location, or tags
-- Cost trend analysis, anomaly detection, and simple forecasting
-- Idle resource detection for VMs, App Services, Storage, SQL, disks, public IPs, and load balancers
-- Prioritized optimization recommendations with ROI, risk, and effort scoring
-- Express dashboard API with static frontend placeholder
-- Strict TypeScript, Zod validation, Winston logging, Vitest coverage, ESLint, and Prettier
+## Visão geral
 
-## Installation
+O projeto permite:
+
+- analisar custos por período e dimensão
+- detectar recursos ociosos
+- gerar sugestões de otimização
+- exportar resultados em formatos úteis para operação
+
+Principais comandos da CLI:
+
+- `costs` (alias: `analyze`)
+- `detect` (alias: `idle-resources`)
+- `recommend` (alias: `optimize-suggestions`)
+- `export` (atalho para exportar análise de custos)
+- `dashboard`
+
+## Pré-requisitos
+
+- **Node.js** `>= 20`
+- **npm**
+- acesso ao Azure (somente para `DATA_MODE=azure`)
+
+## Instalação
 
 ```bash
 npm install
+```
+
+## Configuração (`.env.example`)
+
+Copie o arquivo de exemplo e ajuste os valores:
+
+```bash
+cp .env.example .env
+```
+
+Variáveis principais:
+
+- `DATA_MODE`: `mock` ou `azure`
+- `AUTH_METHOD`: `cli`, `service-principal` ou `managed-identity`
+- `AZURE_SUBSCRIPTION_ID`: obrigatório quando `DATA_MODE=azure`
+- `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`: obrigatórias para `AUTH_METHOD=service-principal`
+- `DASHBOARD_PORT`: porta do dashboard
+
+## Execução em desenvolvimento
+
+```bash
+npm run dev
+```
+
+O script compila e inicia o comando `dashboard` na porta `3000`.
+
+## Build e produção
+
+Gerar artefatos:
+
+```bash
 npm run build
-npm install -g .
 ```
 
-## Configuration
-
-Copy `.env.example` to `.env` and update the values.
-
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | Yes | - | Azure subscription to analyze |
-| `AZURE_TENANT_ID` | Service principal only | - | Microsoft Entra tenant |
-| `AZURE_CLIENT_ID` | Service principal or optional managed identity | - | Client/application id |
-| `AZURE_CLIENT_SECRET` | Service principal only | - | Client secret |
-| `AUTH_METHOD` | No | `cli` | `cli`, `service-principal`, or `managed-identity` |
-| `CACHE_TTL_MINUTES` | No | `15` | In-memory cache TTL |
-| `LOG_LEVEL` | No | `info` | `error`, `warn`, `info`, or `debug` |
-| `LOG_FORMAT` | No | `auto` | `auto`, `json`, or `text` |
-| `DASHBOARD_PORT` | No | `3000` | Dashboard server port |
-
-## Usage
-
-### 1. Costs command
+Executar a CLI compilada:
 
 ```bash
-cost-analyzer costs --period 3 --group-by service --format table
+npm start
 ```
 
-Sample output:
-
-```text
-Period: 2026-01-01..2026-03-31
-Total: $1105.00 USD
-┌───────────────┬──────────┬─────────┐
-│ Dimension     │ Name     │ Cost    │
-├───────────────┼──────────┼─────────┤
-│ Service       │ Compute  │ $205.00 │
-│ Service       │ Storage  │ $130.00 │
-│ Service       │ Database │ $770.00 │
-└───────────────┴──────────┴─────────┘
-```
-
-### 2. Detect command
+Exemplo em produção (CLI compilada):
 
 ```bash
-cost-analyzer detect --resource-type all --threshold 75
+node dist/cli/index.js analyze --period 3 --group-by service
 ```
 
-### 3. Recommend command
+## Qualidade e testes
+
+Lint:
 
 ```bash
-cost-analyzer recommend --min-savings 50 --max-risk medium --limit 10
+npm run lint
 ```
 
-### 4. Dashboard command
+Formatação:
+
+```bash
+npm run format
+```
+
+Type safety:
+
+```bash
+npm run typecheck
+```
+
+Testes unitários/integrados:
+
+```bash
+npm test
+```
+
+Modo watch:
+
+```bash
+npm run test:watch
+```
+
+Cobertura:
+
+```bash
+npm run test:coverage
+```
+
+## Uso da CLI
+
+### Análise de custos
+
+```bash
+cost-analyzer analyze --period 3 --group-by service --format table
+```
+
+### Recursos ociosos
+
+```bash
+cost-analyzer idle-resources --resource-type all --threshold 75 --format table
+```
+
+### Sugestões de otimização
+
+```bash
+cost-analyzer optimize-suggestions --min-savings 50 --max-risk medium --limit 10
+```
+
+### Exportação
+
+```bash
+cost-analyzer export --period 3 --group-by service --output ./reports/costs.csv
+```
+
+> O comando `export` exige `--output`. Se `--format` não for informado, o padrão é `csv`.
+
+### Dashboard
 
 ```bash
 cost-analyzer dashboard --port 3000 --open
 ```
 
-Dashboard APIs:
+## Uso do dashboard
+
+Após iniciar o dashboard, abra `http://localhost:3000`.
+
+KPIs básicos exibidos:
+
+- custo total
+- variação de custo
+- top recursos
+- recursos ociosos
+
+APIs principais:
 
 - `GET /health`
 - `GET /api/costs?period=3&groupBy=service`
@@ -83,38 +170,58 @@ Dashboard APIs:
 - `GET /api/recommendations`
 - `GET /api/summary`
 
-## Dashboard screenshot
+## Modo mock vs Azure real
 
-_Placeholder: add a screenshot of your connected frontend here._
+### `DATA_MODE=mock`
 
-## Architecture
+- não exige conta Azure
+- usa dados locais simulados para análise, recursos ociosos e dashboard
+- ideal para desenvolvimento local e validação rápida
 
-```text
-+-------------------+       +-----------------------+
-| cost-analyzer CLI |------>| Service Layer         |
-| oclif dispatcher  |       | - AzureClientService  |
-+-------------------+       | - CostAnalyzerService |
-         |                  | - ResourceDetector    |
-         |                  | - OptimizerService    |
-         v                  +-----------+-----------+
-+-------------------+                   |
-| Express Dashboard |-------------------+
-| /api + static UI  |                   |
-+-------------------+                   v
-                                 +-------------+
-                                 | Azure APIs  |
-                                 +-------------+
-```
+### `DATA_MODE=azure`
 
-## Development
+- usa APIs reais do Azure
+- exige configuração correta de autenticação e `AZURE_SUBSCRIPTION_ID`
+
+## CI com GitHub Actions
+
+O workflow em `.github/workflows/ci.yml` executa em `push` e `pull_request`:
+
+1. `npm install`
+2. `npm run lint`
+3. `npm run typecheck`
+4. `npm test`
+5. `npm run build`
+
+## Troubleshooting
+
+### `Unknown command`
+
+Use:
 
 ```bash
-npm install
-npm run lint
-npm run test:coverage
-npm run build
+cost-analyzer --help
 ```
 
-## Contributing
+### `The export command requires --output <path>`
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development workflow, testing expectations, and pull request guidance.
+Informe um arquivo de saída:
+
+```bash
+cost-analyzer export --output ./reports/costs.csv
+```
+
+### Erro de configuração Azure
+
+- verifique `DATA_MODE`
+- para `DATA_MODE=azure`, confirme `AZURE_SUBSCRIPTION_ID`
+- para `AUTH_METHOD=service-principal`, confirme `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` e `AZURE_CLIENT_SECRET`
+
+### Dashboard não inicia
+
+- confira se a porta está livre
+- altere com `--port` ou `DASHBOARD_PORT`
+
+## Contribuição
+
+Consulte [`CONTRIBUTING.md`](./CONTRIBUTING.md).

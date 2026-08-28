@@ -9,6 +9,7 @@ import type {
 } from '@/models';
 import { CostEntrySchema, CostForecastSchema, CostSummarySchema, CostTrendSchema } from '@/models';
 import { AzureClientService } from '@/services/azure-client';
+import { mockCostEntries } from '@/services/mock-data';
 import { Cache } from '@/utils/cache';
 import { AzureApiError } from '@/utils/errors';
 import { createLogger } from '@/utils/logger';
@@ -60,6 +61,17 @@ export class CostAnalyzerService {
       return CostSummarySchema.parse(cached);
     }
 
+    if (this.azureClient.isMockMode()) {
+      const mockEntries = mockCostEntries.filter((entry) => entry.date >= startDate && entry.date <= endDate);
+      const summary = this.summarizeEntries(
+        mockEntries.length > 0 ? mockEntries : mockCostEntries,
+        startDate,
+        endDate,
+      );
+      this.cache.set(cacheKey, summary);
+      return summary;
+    }
+
     const scope = `/subscriptions/${subscriptionId}`;
     const client = new CostManagementClient(
       this.azureClient.getCredential(),
@@ -102,6 +114,14 @@ export class CostAnalyzerService {
   public async getCostsByPeriod(months: number): Promise<CostEntry[]> {
     const now = new Date();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(0, months - 1), 1));
+
+    if (this.azureClient.isMockMode()) {
+      const startDate = start.toISOString().slice(0, 10);
+      const endDate = now.toISOString().slice(0, 10);
+      const mockEntries = mockCostEntries.filter((entry) => entry.date >= startDate && entry.date <= endDate);
+      return mockEntries.length > 0 ? mockEntries : mockCostEntries;
+    }
+
     const client = new CostManagementClient(
       this.azureClient.getCredential(),
     ) as unknown as CostQueryClient;
@@ -243,7 +263,10 @@ export class CostAnalyzerService {
   }
 
   private toSummary(result: QueryResult, startDate: string, endDate: string): CostSummary {
-    const entries = this.toEntries(result);
+    return this.summarizeEntries(this.toEntries(result), startDate, endDate);
+  }
+
+  private summarizeEntries(entries: CostEntry[], startDate: string, endDate: string): CostSummary {
     const summary: CostSummary = {
       period: `${startDate}..${endDate}`,
       totalAmount: 0,
