@@ -26,6 +26,14 @@ const logger = createLogger({ service: 'dashboard-server' });
 const rateLimitWindowMs = 60_000;
 const maxRequestsPerWindow = 300;
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
+const errorToMessage = (error: unknown): string => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && error !== null) {
+    return JSON.stringify(error);
+  }
+  return 'Unknown error';
+};
 
 /**
  * Builds the Express application for the dashboard.
@@ -77,8 +85,9 @@ export const createDashboardApp = (options: DashboardServerOptions = {}): Expres
     }),
   );
   app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
-    logger.error('Dashboard request failed', { error: error instanceof Error ? error.message : 'unknown' });
-    response.status(500).json({ error: error instanceof Error ? error.message : 'Internal server error' });
+    const message = errorToMessage(error);
+    logger.error('Dashboard request failed', { error: message });
+    response.status(500).json({ error: message });
   });
 
   return app;
