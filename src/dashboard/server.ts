@@ -93,8 +93,12 @@ export const startDashboardServer = async (options: DashboardServerOptions = {})
   const app = createDashboardApp(options);
   const server = createServer(app);
 
-  await new Promise<void>((resolve) => {
-    server.listen(port, resolve);
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, () => {
+      server.removeListener('error', reject);
+      resolve();
+    });
   });
 
   const shutdown = (signal: string): void => {
