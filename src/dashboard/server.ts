@@ -63,9 +63,11 @@ export const createDashboardApp = (options: DashboardServerOptions = {}): Expres
     entry.count += 1;
     next();
   });
-  app.get('/health', (_request, response) => {
+  const sendHealth = (_request: Request, response: Response): void => {
     response.json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
+  };
+  app.get('/health', sendHealth);
+  app.get('/api/health', sendHealth);
   app.use(express.static(publicDir));
   app.use(
     createDashboardRouter({
