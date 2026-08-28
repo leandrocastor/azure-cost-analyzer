@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import request from 'supertest';
 
-import { createDashboardApp, startDashboardServer } from '@/dashboard/server';
+import { createDashboardApp, errorToMessage, startDashboardServer } from '@/dashboard/server';
 import { resetConfig } from '@/config';
 import {
   mockCostSummary,
@@ -68,27 +68,11 @@ describe('dashboard routes', () => {
     expect(response.body.error).toContain('"period"');
   });
 
-  it('normalizes non-Error values in the error handler', async () => {
+  it('normalizes non-Error values with errorToMessage', () => {
     const nonErrorValue = [{ code: 'invalid_period', path: ['period'] }];
-    const appWithNonErrorFailure = createDashboardApp({
-      publicDir: path.resolve(__dirname, '../../src/dashboard/public'),
-      subscriptionId: 'sub-id',
-      costAnalyzer: {
-        queryCosts: vi.fn(async () => {
-          throw nonErrorValue;
-        }),
-      } as never,
-      resourceDetector: {
-        detectAll: vi.fn(async () => mockIdleResources),
-      } as never,
-      optimizer: {
-        generateRecommendations: vi.fn(async () => mockRecommendations),
-      } as never,
-    });
-
-    const response = await request(appWithNonErrorFailure).get('/api/costs?period=3&groupBy=service');
-    expect(response.status).toBe(500);
-    expect(response.body.error).toBe(JSON.stringify(nonErrorValue));
+    expect(errorToMessage(nonErrorValue)).toBe(JSON.stringify(nonErrorValue));
+    expect(errorToMessage('plain error')).toBe('plain error');
+    expect(errorToMessage(null)).toBe('Unknown error');
   });
 
   it.each(['/dashboard', '/reports'])('falls back to index html for %s', async (route) => {

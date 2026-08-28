@@ -26,7 +26,7 @@ const logger = createLogger({ service: 'dashboard-server' });
 const rateLimitWindowMs = 60_000;
 const maxRequestsPerWindow = 300;
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
-const errorToMessage = (error: unknown): string => {
+export const errorToMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
   if (typeof error === 'object' && error !== null) {
