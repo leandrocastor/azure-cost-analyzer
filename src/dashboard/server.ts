@@ -4,6 +4,7 @@ import { createServer, type Server } from 'node:http';
 import compression from 'compression';
 import cors from 'cors';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 
 import { getConfig } from '@/config';
@@ -23,9 +24,14 @@ export type DashboardServerOptions = {
 };
 
 const logger = createLogger({ service: 'dashboard-server' });
-const rateLimitWindowMs = 60_000;
-const maxRequestsPerWindow = 300;
-const requestCounts = new Map<string, { count: number; resetAt: number }>();
+const apiRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 300,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+});
+
 export const errorToMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -52,25 +58,7 @@ export const createDashboardApp = (options: DashboardServerOptions = {}): Expres
   app.use(cors());
   app.use(compression());
   app.use(express.json());
-  app.use((request, response, next) => {
-    const key = request.ip || request.socket.remoteAddress || 'unknown';
-    const now = Date.now();
-    const entry = requestCounts.get(key);
-
-    if (!entry || now >= entry.resetAt) {
-      requestCounts.set(key, { count: 1, resetAt: now + rateLimitWindowMs });
-      next();
-      return;
-    }
-
-    if (entry.count >= maxRequestsPerWindow) {
-      response.status(429).json({ error: 'Too many requests' });
-      return;
-    }
-
-    entry.count += 1;
-    next();
-  });
+  app.use(apiRateLimit);
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', timestamp: new Date().toISOString() });
   });

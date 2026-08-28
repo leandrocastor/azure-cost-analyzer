@@ -1,6 +1,7 @@
 import path from 'node:path';
 
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 
 import { CostAnalyzerService } from '@/services/cost-analyzer';
@@ -20,35 +21,13 @@ export type DashboardDependencies = {
   publicDir: string;
 };
 
-const staticWindowMs = 60_000;
-const staticMaxRequests = 120;
-const staticRequestCounts = new Map<string, { count: number; resetAt: number }>();
-
-const consumeStaticRequestAllowance = (request: Request): boolean => {
-  const key = request.ip || request.socket.remoteAddress || 'unknown';
-  const now = Date.now();
-  const entry = staticRequestCounts.get(key);
-
-  if (!entry || now >= entry.resetAt) {
-    staticRequestCounts.set(key, { count: 1, resetAt: now + staticWindowMs });
-    return true;
-  }
-
-  if (entry.count >= staticMaxRequests) {
-    return false;
-  }
-
-  entry.count += 1;
-  return true;
-};
-
-const staticRateLimit = (request: Request, response: Response, next: NextFunction): void => {
-  if (!consumeStaticRequestAllowance(request)) {
-    response.status(429).json({ error: 'Too many requests for dashboard assets' });
-    return;
-  }
-  next();
-};
+const staticRateLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests for dashboard assets' },
+});
 
 /**
  * Creates the HTTP routes used by the dashboard API and static frontend.
