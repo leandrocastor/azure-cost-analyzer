@@ -45,6 +45,7 @@
     "compression": "^1.7.5",
     "cors": "^2.8.5",
     "express": "^4.21.1",
+    "express-rate-limit": "^8.6.2",
     "helmet": "^8.0.0",
     "ora": "^8.1.1",
     "winston": "^3.15.0",

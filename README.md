@@ -1,6 +1,6 @@
 # Azure Cost Analyzer
 
-[English](./README.en.md)
+[Português (Brasil)](./README.md) | [English](./README.en.md)
 
 Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboard baseado em Express para visibilidade de custos, detecção de anomalias, descoberta de recursos ociosos e recomendações de otimização.
 
