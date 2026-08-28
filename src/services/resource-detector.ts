@@ -8,6 +8,7 @@ import { StorageManagementClient } from '@azure/arm-storage';
 import type { IdleResource, Resource, ResourceMetric } from '@/models';
 import { IdleResourceSchema } from '@/models';
 import { AzureClientService } from '@/services/azure-client';
+import { mockIdleResources } from '@/services/mock-data';
 import { AzureApiError } from '@/utils/errors';
 import { createLogger } from '@/utils/logger';
 
@@ -73,6 +74,7 @@ const toArray = async <T>(iterable: AsyncIterable<T> | Iterable<T>): Promise<T[]
  */
 export class ResourceDetectorService {
   private readonly logger = createLogger({ service: 'resource-detector' });
+  private readonly mockMode: boolean;
   private readonly monitorClient: MonitorClientLike;
   private readonly computeClient: ComputeClientLike;
   private readonly networkClient: NetworkClientLike;
@@ -84,6 +86,26 @@ export class ResourceDetectorService {
     private readonly azureClient = new AzureClientService(),
     subscriptionIdOverride?: string,
   ) {
+    this.mockMode = this.azureClient.isMockMode();
+    if (this.mockMode) {
+      this.monitorClient = { metrics: { list: async () => ({ value: [] }) } };
+      this.computeClient = {
+        virtualMachines: { listAll: () => [] },
+        disks: { list: () => [] },
+      };
+      this.networkClient = {
+        publicIPAddresses: { listAll: () => [] },
+        loadBalancers: { listAll: () => [] },
+      };
+      this.storageClient = { storageAccounts: { list: () => [] } };
+      this.sqlClient = {
+        servers: { list: () => [] },
+        databases: { listByServer: () => [] },
+      };
+      this.appServiceClient = { webApps: { list: () => [] } };
+      return;
+    }
+
     const credential = this.azureClient.getCredential();
     const subscriptionId = this.azureClient.getSubscriptionId(subscriptionIdOverride);
     this.monitorClient = new MonitorClient(credential, subscriptionId) as unknown as MonitorClientLike;
@@ -98,6 +120,9 @@ export class ResourceDetectorService {
    * Detects virtual machines with consistently low CPU usage.
    */
   public async detectIdleVMs(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return mockIdleResources.filter((item) => item.resource.type.includes('virtualMachines'));
+    }
     return this.wrapDetection(async () => {
       const vms = await toArray(this.computeClient.virtualMachines.listAll());
       const idleResources: IdleResource[] = [];
@@ -119,6 +144,9 @@ export class ResourceDetectorService {
    * Detects App Services with low request volume.
    */
   public async detectIdleAppServices(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return [];
+    }
     return this.wrapDetection(async () => {
       const apps = await toArray(this.appServiceClient.webApps.list());
       const idleResources: IdleResource[] = [];
@@ -140,6 +168,9 @@ export class ResourceDetectorService {
    * Detects storage accounts with no recent access patterns.
    */
   public async detectIdleStorage(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return mockIdleResources.filter((item) => item.resource.type.includes('storageAccounts'));
+    }
     return this.wrapDetection(async () => {
       const accounts = await toArray(this.storageClient.storageAccounts.list());
       const idleResources: IdleResource[] = [];
@@ -161,6 +192,9 @@ export class ResourceDetectorService {
    * Detects SQL databases with low DTU consumption.
    */
   public async detectIdleSqlDatabases(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return [];
+    }
     return this.wrapDetection(async () => {
       const servers = await toArray(this.sqlClient.servers.list());
       const idleResources: IdleResource[] = [];
@@ -188,6 +222,9 @@ export class ResourceDetectorService {
    * Detects unattached managed disks.
    */
   public async detectUnattachedDisks(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return [];
+    }
     return this.wrapDetection(async () => {
       const disks = await toArray(this.computeClient.disks.list());
       return disks
@@ -200,6 +237,9 @@ export class ResourceDetectorService {
    * Detects public IPs that are not associated with resources.
    */
   public async detectUnusedPublicIPs(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return [];
+    }
     return this.wrapDetection(async () => {
       const ips = await toArray(this.networkClient.publicIPAddresses.listAll());
       return ips
@@ -212,6 +252,9 @@ export class ResourceDetectorService {
    * Detects load balancers with no backend pool associations.
    */
   public async detectUnusedLoadBalancers(): Promise<IdleResource[]> {
+    if (this.mockMode) {
+      return [];
+    }
     return this.wrapDetection(async () => {
       const loadBalancers = await toArray(this.networkClient.loadBalancers.listAll());
       return loadBalancers

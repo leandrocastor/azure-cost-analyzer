@@ -92,18 +92,40 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
 
   router.get('/api/summary', async (_request, response, next) => {
     try {
-      const [costs, idleResources] = await Promise.all([
+      const now = new Date();
+      const currentMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const previousMonthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const previousMonthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+
+      const [costs, previousMonthCosts, idleResources] = await Promise.all([
         dependencies.costAnalyzer.queryCosts(
           dependencies.subscriptionId,
-          new Date(new Date().setUTCDate(1)).toISOString().slice(0, 10),
-          new Date().toISOString().slice(0, 10),
+          currentMonthStart.toISOString().slice(0, 10),
+          now.toISOString().slice(0, 10),
+          'service',
+        ),
+        dependencies.costAnalyzer.queryCosts(
+          dependencies.subscriptionId,
+          previousMonthStart.toISOString().slice(0, 10),
+          previousMonthEnd.toISOString().slice(0, 10),
           'service',
         ),
         dependencies.resourceDetector.detectAll(),
       ]);
       const recommendations = await dependencies.optimizer.generateRecommendations(idleResources);
+      const previousTotal = previousMonthCosts.totalAmount;
+      const costVariationPercent = previousTotal === 0
+        ? 0
+        : Number((((costs.totalAmount - previousTotal) / previousTotal) * 100).toFixed(2));
+      const topResources = Object.entries(costs.byService)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 3)
+        .map(([name, amount]) => ({ name, amount }));
+
       response.json({
         totalCost: costs.totalAmount,
+        costVariationPercent,
+        topResources,
         idleResourceCount: idleResources.length,
         recommendationCount: recommendations.length,
         annualSavingsOpportunity: recommendations.reduce((sum, item) => sum + item.annualSavings, 0),

@@ -109,19 +109,19 @@
           <div class="sub" id="kpi-cost-sub"></div>
         </div>
         <div class="kpi-card idle">
-          <div class="label">Idle Resources</div>
-          <div class="value" id="kpi-idle"><div class="skeleton"></div></div>
-          <div class="sub" id="kpi-idle-sub"></div>
+          <div class="label">Cost Variation</div>
+          <div class="value" id="kpi-variation"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-variation-sub"></div>
         </div>
         <div class="kpi-card recs">
-          <div class="label">Recommendations</div>
-          <div class="value" id="kpi-recs"><div class="skeleton"></div></div>
-          <div class="sub" id="kpi-recs-sub"></div>
+          <div class="label">Top Resource</div>
+          <div class="value" id="kpi-top"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-top-sub"></div>
         </div>
         <div class="kpi-card savings">
-          <div class="label">Annual Savings Opportunity</div>
-          <div class="value" id="kpi-savings"><div class="skeleton"></div></div>
-          <div class="sub" id="kpi-savings-sub">Potential savings if all recommendations applied</div>
+          <div class="label">Idle Resources</div>
+          <div class="value" id="kpi-idle"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-idle-sub">Resources with low utilization</div>
         </div>
       </div>
 
@@ -310,9 +310,13 @@
           ]);
 
           renderKPI('kpi-cost', fmt(summary.totalCost), 'Month-to-date');
+          renderKPI('kpi-variation', (summary.costVariationPercent ?? 0).toFixed(2) + '%', 'Compared to previous month');
+          renderKPI(
+            'kpi-top',
+            summary.topResources && summary.topResources.length ? summary.topResources[0].name : '—',
+            summary.topResources && summary.topResources.length ? fmtFull(summary.topResources[0].amount) : 'No data',
+          );
           renderKPI('kpi-idle', String(summary.idleResourceCount), 'Resources with low utilization');
-          renderKPI('kpi-recs', String(summary.recommendationCount), 'Optimization opportunities');
-          renderKPI('kpi-savings', fmt(summary.annualSavingsOpportunity), 'Potential savings if all recommendations applied');
 
           idleData = idle;
           recsData = recs;

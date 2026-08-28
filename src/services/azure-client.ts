@@ -6,7 +6,7 @@ import {
 } from '@azure/identity';
 
 import { getConfig, type AppConfig } from '@/config';
-import { AzureAuthError } from '@/utils/errors';
+import { AzureAuthError, ValidationError } from '@/utils/errors';
 import { createLogger } from '@/utils/logger';
 import { retry, type RetryConfig } from '@/utils/retry';
 
@@ -27,7 +27,26 @@ export class AzureClientService {
    * Returns the active Azure subscription id.
    */
   public getSubscriptionId(subscriptionId?: string): string {
-    return subscriptionId ?? this.config.AZURE_SUBSCRIPTION_ID;
+    if (subscriptionId) {
+      return subscriptionId;
+    }
+
+    if (this.isMockMode()) {
+      return this.config.AZURE_SUBSCRIPTION_ID ?? 'mock-subscription';
+    }
+
+    if (!this.config.AZURE_SUBSCRIPTION_ID) {
+      throw new ValidationError('AZURE_SUBSCRIPTION_ID is required when DATA_MODE=azure');
+    }
+
+    return this.config.AZURE_SUBSCRIPTION_ID;
+  }
+
+  /**
+   * Indicates whether local mock datasets should be used instead of Azure APIs.
+   */
+  public isMockMode(): boolean {
+    return this.config.DATA_MODE === 'mock';
   }
 
   /**

@@ -32,9 +32,21 @@ describe('CLI dispatcher', () => {
     ['detect', mocks.detectRun],
     ['recommend', mocks.recommendRun],
     ['dashboard', mocks.dashboardRun],
+    ['analyze', mocks.costsRun],
+    ['idle-resources', mocks.detectRun],
+    ['optimize-suggestions', mocks.recommendRun],
   ])('dispatches %s command', async (command, spy) => {
     await runCli([command, '--flag']);
     expect(spy).toHaveBeenCalledWith(['--flag']);
+  });
+
+  it('dispatches export with default csv format', async () => {
+    await runCli(['export', '--output', 'report.csv']);
+    expect(mocks.costsRun).toHaveBeenCalledWith(['--format', 'csv', '--output', 'report.csv']);
+  });
+
+  it('fails when export has no output path', async () => {
+    await expect(runCli(['export'])).rejects.toThrow('requires --output');
   });
 
   it.each(['--help', '-h'])('prints help for %s', async (flag) => {

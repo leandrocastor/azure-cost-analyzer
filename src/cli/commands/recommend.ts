@@ -1,5 +1,5 @@
 import { Command, Flags } from '@oclif/core';
-import Table from 'cli-table3';
+import CliTable from 'cli-table3';
 
 import { OptimizerService } from '@/services/optimizer';
 import { ResourceDetectorService } from '@/services/resource-detector';
@@ -72,7 +72,7 @@ export default class RecommendCommand extends Command {
       ].join('\n');
     }
 
-    const table = new Table({
+    const table = new CliTable({
       head: ['Title', 'Action', 'Monthly', 'Annual', 'Risk', 'Effort', 'ROI'],
       wordWrap: true,
     });

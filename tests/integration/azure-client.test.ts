@@ -71,6 +71,20 @@ describe('AzureClientService', () => {
     expect(service.getSubscriptionId()).toBe(validEnv.AZURE_SUBSCRIPTION_ID);
   });
 
+  it('returns a synthetic subscription in mock mode without Azure config', () => {
+    const service = new AzureClientService({
+      DATA_MODE: 'mock',
+      AUTH_METHOD: 'cli',
+      CACHE_TTL_MINUTES: 15,
+      LOG_LEVEL: 'info',
+      LOG_FORMAT: 'auto',
+      DASHBOARD_PORT: 3000,
+      NODE_ENV: 'test',
+    });
+    expect(service.isMockMode()).toBe(true);
+    expect(service.getSubscriptionId()).toBe('mock-subscription');
+  });
+
   it('wraps credential creation errors', () => {
     vi.mocked(DefaultAzureCredential).mockImplementationOnce(function () {
       throw new Error('bad auth');

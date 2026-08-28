@@ -3,7 +3,14 @@ import { createServer, type Server } from 'node:http';
 
 import compression from 'compression';
 import cors from 'cors';
-import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import express, {
+  json,
+  static as staticMiddleware,
+  type Express,
+  type Request,
+  type Response,
+  type NextFunction,
+} from 'express';
 import helmet from 'helmet';
 
 import { getConfig } from '@/config';
@@ -51,7 +58,7 @@ export const createDashboardApp = (options: DashboardServerOptions = {}): Expres
   app.use(helmet());
   app.use(cors());
   app.use(compression());
-  app.use(express.json());
+  app.use(json());
   app.use((request, response, next) => {
     const key = request.ip || request.socket.remoteAddress || 'unknown';
     const now = Date.now();
@@ -74,7 +81,7 @@ export const createDashboardApp = (options: DashboardServerOptions = {}): Expres
   app.get('/health', (_request, response) => {
     response.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
-  app.use(express.static(publicDir));
+  app.use(staticMiddleware(publicDir));
   app.use(
     createDashboardRouter({
       costAnalyzer,

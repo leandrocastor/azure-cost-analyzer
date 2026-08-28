@@ -3,11 +3,13 @@ import { z } from 'zod';
 import { ConfigurationError } from '@/utils/errors';
 
 const authMethodSchema = z.enum(['cli', 'service-principal', 'managed-identity']);
+const dataModeSchema = z.enum(['azure', 'mock']);
 const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
 const logFormatSchema = z.enum(['auto', 'json', 'text']);
 
 const baseConfigSchema = z.object({
-  AZURE_SUBSCRIPTION_ID: z.string().uuid(),
+  DATA_MODE: dataModeSchema.default('azure'),
+  AZURE_SUBSCRIPTION_ID: z.string().uuid().optional(),
   AZURE_TENANT_ID: z.string().uuid().optional(),
   AZURE_CLIENT_ID: z.string().uuid().optional(),
   AZURE_CLIENT_SECRET: z.string().min(1).optional(),
@@ -20,7 +22,15 @@ const baseConfigSchema = z.object({
 });
 
 const configSchema = baseConfigSchema.superRefine((value, ctx) => {
-  if (value.AUTH_METHOD === 'service-principal') {
+  if (value.DATA_MODE === 'azure' && !value.AZURE_SUBSCRIPTION_ID) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['AZURE_SUBSCRIPTION_ID'],
+      message: 'AZURE_SUBSCRIPTION_ID is required when DATA_MODE=azure',
+    });
+  }
+
+  if (value.DATA_MODE === 'azure' && value.AUTH_METHOD === 'service-principal') {
     if (!value.AZURE_TENANT_ID) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -49,6 +59,7 @@ const configSchema = baseConfigSchema.superRefine((value, ctx) => {
 
 export type AppConfig = z.infer<typeof configSchema>;
 export type AuthMethod = z.infer<typeof authMethodSchema>;
+export type DataMode = z.infer<typeof dataModeSchema>;
 export type LogLevel = z.infer<typeof logLevelSchema>;
 export type LogFormat = z.infer<typeof logFormatSchema>;
 

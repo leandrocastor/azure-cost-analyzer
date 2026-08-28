@@ -1,5 +1,5 @@
 import { Command, Flags } from '@oclif/core';
-import Table from 'cli-table3';
+import CliTable from 'cli-table3';
 import ora from 'ora';
 
 import { ResourceDetectorService } from '@/services/resource-detector';
@@ -101,7 +101,7 @@ export default class DetectCommand extends Command {
       ].join('\n');
     }
 
-    const table = new Table({
+    const table = new CliTable({
       head: ['Type', 'Name', 'Resource Group', 'Idle Score', 'Savings', 'Reason'],
       wordWrap: true,
     });
