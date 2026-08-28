@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import { createServer } from 'node:http';
 
 import request from 'supertest';
 
@@ -11,8 +13,10 @@ import {
   validEnv,
 } from '../fixtures/mock-data';
 
-describe('dashboard routes', () => {
-  const app = createDashboardApp({
+import type { Express } from 'express';
+
+const makeApp = (): Express =>
+  createDashboardApp({
     publicDir: path.resolve(__dirname, '../../src/dashboard/public'),
     subscriptionId: 'sub-id',
     costAnalyzer: {
@@ -26,10 +30,24 @@ describe('dashboard routes', () => {
     } as never,
   });
 
+describe('dashboard routes', () => {
+  const app = makeApp();
+
   it('returns health status', async () => {
     const response = await request(app).get('/health');
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('ok');
+  });
+
+  it('returns health response with ISO timestamp', async () => {
+    const before = Date.now();
+    const response = await request(app).get('/health');
+    const after = Date.now();
+    expect(response.status).toBe(200);
+    expect(response.body.timestamp).toBeDefined();
+    const ts = new Date(response.body.timestamp as string).getTime();
+    expect(ts).toBeGreaterThanOrEqual(before);
+    expect(ts).toBeLessThanOrEqual(after);
   });
 
   it('returns cost summary', async () => {
@@ -56,10 +74,39 @@ describe('dashboard routes', () => {
     expect(response.body.idleResourceCount).toBe(2);
   });
 
-  it('serves the frontend placeholder', async () => {
+  it('serves the dashboard frontend', async () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);
     expect(response.text).toContain('Azure Cost Analyzer Dashboard');
+  });
+
+  it('dashboard SPA fetches cost breakdown per grouping', () => {
+    const html = fs.readFileSync(path.resolve(__dirname, '../../src/dashboard/public/index.html'), 'utf8');
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=service')");
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=resource-group')");
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=location')");
+  });
+
+  it('dashboard SPA renderers avoid innerHTML and handle unknown errors safely', () => {
+    const html = fs.readFileSync(path.resolve(__dirname, '../../src/dashboard/public/index.html'), 'utf8');
+    const idleSection = html.slice(
+      html.indexOf('function renderIdleTable()'),
+      html.indexOf('function renderRecs()'),
+    );
+    const recsSection = html.slice(
+      html.indexOf('function renderRecs()'),
+      html.indexOf('function renderBarChart(containerId, data)'),
+    );
+    const chartSection = html.slice(
+      html.indexOf('function renderBarChart(containerId, data)'),
+      html.indexOf('async function loadAll()'),
+    );
+
+    expect(idleSection).not.toContain('innerHTML');
+    expect(recsSection).not.toContain('innerHTML');
+    expect(chartSection).not.toContain('innerHTML');
+    expect(html).toContain('function errorToMessage(error)');
+    expect(html).toContain('showError(errorToMessage(err));');
   });
 
   it('validates invalid costs query parameters', async () => {
@@ -67,10 +114,44 @@ describe('dashboard routes', () => {
     expect(response.status).toBe(500);
   });
 
+  it('returns JSON error body from the error handler', async () => {
+    const response = await request(app).get('/api/costs?period=99');
+    expect(response.status).toBe(500);
+    expect(response.headers['content-type']).toMatch(/json/);
+    expect(response.body).toHaveProperty('error');
+  });
+
   it.each(['/dashboard', '/reports'])('falls back to index html for %s', async (route) => {
     const response = await request(app).get(route);
     expect(response.status).toBe(200);
-    expect(response.text).toContain('placeholder');
+    expect(response.text).toContain('Azure Cost Analyzer Dashboard');
+  });
+
+  it('includes CORS headers in API responses', async () => {
+    const response = await request(app)
+      .get('/api/summary')
+      .set('Origin', 'http://localhost:3001');
+    expect(response.headers['access-control-allow-origin']).toBeDefined();
+  });
+
+  it('rate-limits the static asset fallback after 120 requests', async () => {
+    const isolatedApp = makeApp();
+    const promises = Array.from({ length: 122 }, () =>
+      request(isolatedApp).get('/some-spa-route'),
+    );
+    const responses = await Promise.all(promises);
+    const limited = responses.filter((r) => r.status === 429);
+    expect(limited.length).toBeGreaterThan(0);
+  });
+
+  it('rate-limits API endpoints after 300 requests from the same source', async () => {
+    const isolatedApp = makeApp();
+    const promises = Array.from({ length: 302 }, () =>
+      request(isolatedApp).get('/api/summary'),
+    );
+    const responses = await Promise.all(promises);
+    const limited = responses.filter((r) => r.status === 429);
+    expect(limited.length).toBeGreaterThan(0);
   });
 
   it('starts the dashboard server with graceful shutdown hooks', async () => {
@@ -100,5 +181,28 @@ describe('dashboard routes', () => {
         resolve();
       });
     });
+  });
+
+  it('rejects a second server binding on an already occupied port', async () => {
+    const blocker = createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, resolve));
+    const address = blocker.address();
+    const occupiedPort = typeof address === 'object' && address ? address.port : 0;
+
+    process.env = { ...process.env, ...validEnv };
+    resetConfig();
+
+    await expect(
+      startDashboardServer({
+        port: occupiedPort,
+        subscriptionId: 'sub-id',
+        publicDir: path.resolve(__dirname, '../../src/dashboard/public'),
+        costAnalyzer: { queryCosts: vi.fn(async () => mockCostSummary) } as never,
+        resourceDetector: { detectAll: vi.fn(async () => mockIdleResources) } as never,
+        optimizer: { generateRecommendations: vi.fn(async () => mockRecommendations) } as never,
+      }),
+    ).rejects.toThrow();
+
+    await new Promise<void>((resolve, reject) => blocker.close((e) => (e ? reject(e) : resolve())));
   });
 });

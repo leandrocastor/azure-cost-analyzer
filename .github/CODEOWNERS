@@ -1,0 +1,15 @@
+# Global fallback — repository owner reviews everything unless overridden below
+* @leandrocastor
+
+# Source code
+src/ @leandrocastor
+
+# Tests
+tests/ @leandrocastor
+
+# CI/CD workflows
+.github/workflows/ @leandrocastor
+
+# Package manifest and lock file
+package.json @leandrocastor
+package-lock.json @leandrocastor

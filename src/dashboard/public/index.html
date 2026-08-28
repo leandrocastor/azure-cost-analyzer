@@ -5,37 +5,479 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Azure Cost Analyzer Dashboard</title>
     <style>
-      body {
-        font-family: Arial, sans-serif;
-        background: #0f172a;
-        color: #e2e8f0;
-        margin: 0;
-        padding: 3rem;
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --surface2: #263248;
+        --border: #334155;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --green: #4ade80;
+        --yellow: #facc15;
+        --red: #f87171;
+        --purple: #c084fc;
+        --radius: 12px;
+        --shadow: 0 4px 24px rgba(0,0,0,0.4);
       }
-      .card {
-        max-width: 800px;
-        margin: 0 auto;
-        background: #1e293b;
-        border-radius: 16px;
-        padding: 2rem;
-        box-shadow: 0 20px 50px rgba(15, 23, 42, 0.35);
-      }
-      code {
-        color: #38bdf8;
+      body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+      header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+      header h1 { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+      header span { font-size: 0.75rem; color: var(--muted); margin-left: auto; }
+      #status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 4px; }
+      #status-dot.ok { background: var(--green); }
+      #status-dot.err { background: var(--red); }
+      main { max-width: 1400px; margin: 0 auto; padding: 2rem; display: flex; flex-direction: column; gap: 2rem; }
+      .error-banner { background: #7f1d1d; border: 1px solid var(--red); border-radius: var(--radius); padding: 1rem; color: var(--red); display: none; }
+      .error-banner.visible { display: block; }
+      .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.25rem; }
+      .kpi-card { background: var(--surface); border-radius: var(--radius); padding: 1.5rem; border: 1px solid var(--border); box-shadow: var(--shadow); }
+      .kpi-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+      .kpi-card .value { font-size: 2rem; font-weight: 700; }
+      .kpi-card .sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+      .kpi-card.cost .value { color: var(--accent); }
+      .kpi-card.idle .value { color: var(--yellow); }
+      .kpi-card.recs .value { color: var(--purple); }
+      .kpi-card.savings .value { color: var(--green); }
+      .skeleton { background: linear-gradient(90deg, var(--surface) 25%, var(--surface2) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; height: 2rem; width: 60%; }
+      @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+      section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow); overflow: hidden; }
+      .table-controls { display: flex; gap: 0.75rem; padding: 1rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+      .table-controls input, .table-controls select { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.75rem; color: var(--text); font-size: 0.85rem; outline: none; }
+      .table-controls input:focus, .table-controls select:focus { border-color: var(--accent); }
+      table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+      th { background: var(--surface2); padding: 0.75rem 1rem; text-align: left; font-weight: 600; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer; user-select: none; white-space: nowrap; }
+      th:hover { color: var(--text); }
+      th .sort-icon { margin-left: 4px; opacity: 0.5; }
+      th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+      td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+      tr:last-child td { border-bottom: none; }
+      tr:hover td { background: var(--surface2); }
+      .badge { display: inline-block; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
+      .badge.low { background: #14532d; color: var(--green); }
+      .badge.medium { background: #713f12; color: var(--yellow); }
+      .badge.high { background: #7f1d1d; color: var(--red); }
+      .badge.new { background: #1e3a5f; color: var(--accent); }
+      .score-bar { display: flex; align-items: center; gap: 0.5rem; }
+      .score-bar-inner { height: 6px; border-radius: 3px; background: var(--accent); min-width: 4px; }
+      .rec-list { display: flex; flex-direction: column; gap: 0; }
+      .rec-item { padding: 1.25rem; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: start; }
+      .rec-item:last-child { border-bottom: none; }
+      .rec-item:hover { background: var(--surface2); }
+      .rec-title { font-weight: 600; margin-bottom: 0.25rem; }
+      .rec-desc { font-size: 0.8rem; color: var(--muted); }
+      .rec-meta { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+      .rec-stats { text-align: right; }
+      .rec-savings { font-size: 1.1rem; font-weight: 700; color: var(--green); }
+      .rec-roi { font-size: 0.75rem; color: var(--muted); }
+      .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }
+      .chart-card { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); padding: 1.25rem; }
+      .chart-card h3 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 1rem; }
+      .bar-chart { display: flex; flex-direction: column; gap: 0.6rem; }
+      .bar-row { display: grid; grid-template-columns: 120px 1fr 70px; align-items: center; gap: 0.5rem; font-size: 0.8rem; }
+      .bar-row .bar-label { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bar-track { background: var(--surface2); border-radius: 4px; height: 8px; overflow: hidden; }
+      .bar-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.4s ease; }
+      .bar-row .bar-val { text-align: right; color: var(--text); font-weight: 500; }
+      .empty { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
+      #refresh-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 0.4rem 0.9rem; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
+      #refresh-btn:hover { background: var(--border); }
+      #refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      @media (max-width: 640px) {
+        main { padding: 1rem; }
+        .bar-row { grid-template-columns: 80px 1fr 55px; }
+        .rec-item { grid-template-columns: 1fr; }
       }
     </style>
   </head>
   <body>
-    <div class="card">
+    <header>
+      <span id="status-dot"></span>
       <h1>Azure Cost Analyzer Dashboard</h1>
-      <p>The enterprise dashboard API is running. Connect your frontend to:</p>
-      <ul>
-        <li><code>/api/costs</code></li>
-        <li><code>/api/resources/idle</code></li>
-        <li><code>/api/recommendations</code></li>
-        <li><code>/api/summary</code></li>
-      </ul>
-      <p>Replace this placeholder with your preferred SPA or BI frontend.</p>
-    </div>
+      <button id="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+      <span id="last-updated"></span>
+    </header>
+    <main>
+      <div id="error-banner" class="error-banner"></div>
+
+      <div class="kpi-grid">
+        <div class="kpi-card cost">
+          <div class="label">Total Cost (MTD)</div>
+          <div class="value" id="kpi-cost"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-cost-sub"></div>
+        </div>
+        <div class="kpi-card idle">
+          <div class="label">Idle Resources</div>
+          <div class="value" id="kpi-idle"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-idle-sub"></div>
+        </div>
+        <div class="kpi-card recs">
+          <div class="label">Recommendations</div>
+          <div class="value" id="kpi-recs"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-recs-sub"></div>
+        </div>
+        <div class="kpi-card savings">
+          <div class="label">Annual Savings Opportunity</div>
+          <div class="value" id="kpi-savings"><div class="skeleton"></div></div>
+          <div class="sub" id="kpi-savings-sub">Potential savings if all recommendations applied</div>
+        </div>
+      </div>
+
+      <section>
+        <h2>Idle Resources</h2>
+        <div class="card">
+          <div class="table-controls">
+            <input id="idle-filter" type="text" placeholder="Filter by name or resource group…" oninput="renderIdleTable()" />
+            <select id="idle-sort" onchange="renderIdleTable()">
+              <option value="idleScore-desc">Idle Score ↓</option>
+              <option value="idleScore-asc">Idle Score ↑</option>
+              <option value="estimatedMonthlySavings-desc">Savings ↓</option>
+              <option value="estimatedMonthlySavings-asc">Savings ↑</option>
+            </select>
+          </div>
+          <div id="idle-table-container"><div class="empty">Loading…</div></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Recommendations</h2>
+        <div class="card" id="recs-container"><div class="empty">Loading…</div></div>
+      </section>
+
+      <section>
+        <h2>Cost Breakdown</h2>
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>By Service</h3>
+            <div id="chart-service" class="bar-chart"><div class="empty">Loading…</div></div>
+          </div>
+          <div class="chart-card">
+            <h3>By Resource Group</h3>
+            <div id="chart-rg" class="bar-chart"><div class="empty">Loading…</div></div>
+          </div>
+          <div class="chart-card">
+            <h3>By Location</h3>
+            <div id="chart-loc" class="bar-chart"><div class="empty">Loading…</div></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      let idleData = [];
+      let recsData = [];
+
+      const fmt = (n) => typeof n === 'number' ? '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
+      const fmtFull = (n) => typeof n === 'number' ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+
+      function setStatus(ok) {
+        const dot = document.getElementById('status-dot');
+        dot.className = ok ? 'ok' : 'err';
+      }
+
+      function showError(msg) {
+        const el = document.getElementById('error-banner');
+        el.textContent = 'Error: ' + msg;
+        el.classList.add('visible');
+      }
+
+      function clearError() {
+        document.getElementById('error-banner').classList.remove('visible');
+      }
+
+      async function fetchJSON(url) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(url + ' returned ' + res.status);
+        return res.json();
+      }
+
+      function renderKPI(id, value, sub) {
+        document.getElementById(id).textContent = value;
+        const subEl = document.getElementById(id + '-sub');
+        if (subEl && sub != null) subEl.textContent = sub;
+      }
+
+      function clearNode(node) {
+        while (node.firstChild) node.removeChild(node.firstChild);
+      }
+
+      function renderEmpty(node, message) {
+        clearNode(node);
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = message;
+        node.appendChild(empty);
+      }
+
+      function toFiniteNumber(value, fallback = 0) {
+        return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+      }
+
+      function sanitizeLevel(value) {
+        const normalized = typeof value === 'string' ? value.toLowerCase() : '';
+        return ['low', 'medium', 'high'].includes(normalized) ? normalized : 'medium';
+      }
+
+      function errorToMessage(error) {
+        if (error instanceof Error && error.message) return error.message;
+        if (typeof error === 'string' && error) return error;
+        if (error && typeof error === 'object' && typeof error.message === 'string' && error.message) return error.message;
+        return 'Failed to load data';
+      }
+
+      function renderIdleTable() {
+        const filter = document.getElementById('idle-filter').value.toLowerCase();
+        const [sortField, sortDir] = document.getElementById('idle-sort').value.split('-');
+        const container = document.getElementById('idle-table-container');
+
+        let rows = idleData.filter(r => {
+          const name = (r.resource?.name || '').toLowerCase();
+          const rg = (r.resource?.resourceGroup || '').toLowerCase();
+          return !filter || name.includes(filter) || rg.includes(filter);
+        });
+
+        rows.sort((a, b) => {
+          const aVal = toFiniteNumber(a[sortField]);
+          const bVal = toFiniteNumber(b[sortField]);
+          return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+        });
+
+        if (!rows.length) {
+          renderEmpty(container, 'No idle resources found.');
+          return;
+        }
+
+        clearNode(container);
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        ['Name', 'Type', 'Resource Group', 'Location', 'Idle Score', 'Monthly Savings', 'Reason'].forEach((label) => {
+          const th = document.createElement('th');
+          th.textContent = label;
+          headRow.appendChild(th);
+        });
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        rows.forEach((r) => {
+          const res = r.resource || {};
+          const type = (res.type || '').split('/').pop() || '—';
+          const score = toFiniteNumber(r.idleScore);
+          const clampedScore = Math.max(0, Math.min(80, Math.round(score)));
+
+          const tr = document.createElement('tr');
+
+          const nameTd = document.createElement('td');
+          const strong = document.createElement('strong');
+          strong.textContent = res.name || '—';
+          nameTd.appendChild(strong);
+          tr.appendChild(nameTd);
+
+          const typeTd = document.createElement('td');
+          const typeBadge = document.createElement('span');
+          typeBadge.className = 'badge new';
+          typeBadge.textContent = type;
+          typeTd.appendChild(typeBadge);
+          tr.appendChild(typeTd);
+
+          const rgTd = document.createElement('td');
+          rgTd.textContent = res.resourceGroup || '—';
+          tr.appendChild(rgTd);
+
+          const locTd = document.createElement('td');
+          locTd.textContent = res.location || '—';
+          tr.appendChild(locTd);
+
+          const scoreTd = document.createElement('td');
+          const scoreBar = document.createElement('div');
+          scoreBar.className = 'score-bar';
+          const scoreBarInner = document.createElement('div');
+          scoreBarInner.className = 'score-bar-inner';
+          scoreBarInner.style.width = `${clampedScore}px`;
+          const scoreLabel = document.createElement('span');
+          scoreLabel.textContent = String(Math.round(score));
+          scoreBar.appendChild(scoreBarInner);
+          scoreBar.appendChild(scoreLabel);
+          scoreTd.appendChild(scoreBar);
+          tr.appendChild(scoreTd);
+
+          const monthlyTd = document.createElement('td');
+          monthlyTd.style.color = 'var(--green)';
+          monthlyTd.textContent = fmtFull(r.estimatedMonthlySavings);
+          tr.appendChild(monthlyTd);
+
+          const reasonTd = document.createElement('td');
+          reasonTd.style.color = 'var(--muted)';
+          reasonTd.style.fontSize = '0.8rem';
+          reasonTd.textContent = r.reason || '—';
+          tr.appendChild(reasonTd);
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        container.appendChild(table);
+      }
+
+      function renderRecs() {
+        const container = document.getElementById('recs-container');
+        if (!recsData.length) {
+          renderEmpty(container, 'No recommendations available.');
+          return;
+        }
+        clearNode(container);
+        const list = document.createElement('div');
+        list.className = 'rec-list';
+
+        recsData.forEach((r) => {
+          const risk = sanitizeLevel(r.risk);
+          const effort = sanitizeLevel(r.effort);
+
+          const item = document.createElement('div');
+          item.className = 'rec-item';
+
+          const details = document.createElement('div');
+          const title = document.createElement('div');
+          title.className = 'rec-title';
+          title.textContent = r.title || '—';
+          details.appendChild(title);
+
+          const desc = document.createElement('div');
+          desc.className = 'rec-desc';
+          desc.textContent = r.description || '';
+          details.appendChild(desc);
+
+          const meta = document.createElement('div');
+          meta.className = 'rec-meta';
+          const riskBadge = document.createElement('span');
+          riskBadge.className = `badge ${risk}`;
+          riskBadge.textContent = `Risk: ${risk}`;
+          meta.appendChild(riskBadge);
+          const effortBadge = document.createElement('span');
+          effortBadge.className = `badge ${effort}`;
+          effortBadge.textContent = `Effort: ${effort}`;
+          meta.appendChild(effortBadge);
+          const actionBadge = document.createElement('span');
+          actionBadge.className = 'badge new';
+          actionBadge.textContent = r.actionType || '—';
+          meta.appendChild(actionBadge);
+          const statusBadge = document.createElement('span');
+          statusBadge.className = 'badge new';
+          statusBadge.textContent = r.status || '—';
+          meta.appendChild(statusBadge);
+          details.appendChild(meta);
+          item.appendChild(details);
+
+          const stats = document.createElement('div');
+          stats.className = 'rec-stats';
+          const annual = document.createElement('div');
+          annual.className = 'rec-savings';
+          annual.textContent = `${fmt(r.annualSavings)}/yr`;
+          stats.appendChild(annual);
+          const roi = document.createElement('div');
+          roi.className = 'rec-roi';
+          roi.textContent = `ROI: ${r.roi != null && Number.isFinite(r.roi) ? r.roi.toFixed(1) + 'x' : '—'}`;
+          stats.appendChild(roi);
+          const monthly = document.createElement('div');
+          monthly.style.fontSize = '0.75rem';
+          monthly.style.color = 'var(--muted)';
+          monthly.style.marginTop = '2px';
+          monthly.textContent = `${fmtFull(r.monthlySavings)}/mo`;
+          stats.appendChild(monthly);
+          item.appendChild(stats);
+
+          list.appendChild(item);
+        });
+
+        container.appendChild(list);
+      }
+
+      function renderBarChart(containerId, data) {
+        const container = document.getElementById(containerId);
+        if (!data || !Object.keys(data).length) {
+          renderEmpty(container, 'No data.');
+          return;
+        }
+        const entries = Object.entries(data)
+          .map(([label, value]) => [label, toFiniteNumber(value)])
+          .sort((a, b) => b[1] - a[1]);
+        if (!entries.length) {
+          renderEmpty(container, 'No data.');
+          return;
+        }
+        const max = entries[0][1] || 1;
+        clearNode(container);
+        entries.forEach(([label, value]) => {
+          const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
+          const row = document.createElement('div');
+          row.className = 'bar-row';
+
+          const labelEl = document.createElement('div');
+          labelEl.className = 'bar-label';
+          labelEl.title = label;
+          labelEl.textContent = label;
+          row.appendChild(labelEl);
+
+          const track = document.createElement('div');
+          track.className = 'bar-track';
+          const fill = document.createElement('div');
+          fill.className = 'bar-fill';
+          fill.style.width = `${pct}%`;
+          track.appendChild(fill);
+          row.appendChild(track);
+
+          const valueEl = document.createElement('div');
+          valueEl.className = 'bar-val';
+          valueEl.textContent = fmt(value);
+          row.appendChild(valueEl);
+
+          container.appendChild(row);
+        });
+      }
+
+      async function loadAll() {
+        const btn = document.getElementById('refresh-btn');
+        btn.disabled = true;
+        clearError();
+
+        try {
+          const [summary, idle, recs, costsByService, costsByResourceGroup, costsByLocation] = await Promise.all([
+            fetchJSON('/api/summary'),
+            fetchJSON('/api/resources/idle'),
+            fetchJSON('/api/recommendations'),
+            fetchJSON('/api/costs?period=1&groupBy=service'),
+            fetchJSON('/api/costs?period=1&groupBy=resource-group'),
+            fetchJSON('/api/costs?period=1&groupBy=location'),
+          ]);
+
+          renderKPI('kpi-cost', fmt(summary.totalCost), 'Month-to-date');
+          renderKPI('kpi-idle', String(summary.idleResourceCount), 'Resources with low utilization');
+          renderKPI('kpi-recs', String(summary.recommendationCount), 'Optimization opportunities');
+          renderKPI('kpi-savings', fmt(summary.annualSavingsOpportunity), 'Potential savings if all recommendations applied');
+
+          idleData = idle;
+          recsData = recs;
+          renderIdleTable();
+          renderRecs();
+
+          renderBarChart('chart-service', (costsByService || {}).byService);
+          renderBarChart('chart-rg', (costsByResourceGroup || {}).byResourceGroup);
+          renderBarChart('chart-loc', (costsByLocation || {}).byLocation);
+
+          setStatus(true);
+          document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+        } catch (err) {
+          setStatus(false);
+          showError(errorToMessage(err));
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      loadAll();
+    </script>
   </body>
 </html>
