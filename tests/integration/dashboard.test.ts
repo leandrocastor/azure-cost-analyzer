@@ -26,8 +26,8 @@ describe('dashboard routes', () => {
     } as never,
   });
 
-  it('returns health status', async () => {
-    const response = await request(app).get('/health');
+  it.each(['/health', '/api/health'])('returns health status for %s', async (route) => {
+    const response = await request(app).get(route);
     expect(response.status).toBe(200);
     expect(response.body.status).toBe('ok');
   });
@@ -56,10 +56,14 @@ describe('dashboard routes', () => {
     expect(response.body.idleResourceCount).toBe(2);
   });
 
-  it('serves the frontend placeholder', async () => {
+  it('serves the dashboard spa shell', async () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);
     expect(response.text).toContain('Azure Cost Analyzer Dashboard');
+    expect(response.text).toContain('Idle Resources');
+    expect(response.text).toContain('function escapeHtml');
+    expect(response.text).toContain('/api/health');
+    expect(response.text).not.toContain('Replace this placeholder');
   });
 
   it('validates invalid costs query parameters', async () => {
@@ -70,7 +74,8 @@ describe('dashboard routes', () => {
   it.each(['/dashboard', '/reports'])('falls back to index html for %s', async (route) => {
     const response = await request(app).get(route);
     expect(response.status).toBe(200);
-    expect(response.text).toContain('placeholder');
+    expect(response.text).toContain('Recommendations');
+    expect(response.text).toContain('/api/recommendations');
   });
 
   it('starts the dashboard server with graceful shutdown hooks', async () => {

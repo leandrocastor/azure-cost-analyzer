@@ -1,4 +1,7 @@
-import { Router, type Request } from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 
 import { CostAnalyzerService } from '@/services/cost-analyzer';
@@ -21,18 +24,6 @@ export type DashboardDependencies = {
 const staticWindowMs = 60_000;
 const staticMaxRequests = 120;
 const staticRequestCounts = new Map<string, { count: number; resetAt: number }>();
-const fallbackHtml = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Azure Cost Analyzer Dashboard</title>
-  </head>
-  <body>
-    <h1>Azure Cost Analyzer Dashboard</h1>
-    <p>Dashboard frontend placeholder. Open <code>/index.html</code> for the static asset.</p>
-  </body>
-</html>`;
 
 const consumeStaticRequestAllowance = (request: Request): boolean => {
   const key = request.ip || request.socket.remoteAddress || 'unknown';
@@ -52,11 +43,21 @@ const consumeStaticRequestAllowance = (request: Request): boolean => {
   return true;
 };
 
+const staticRateLimit = (request: Request, response: Response, next: NextFunction): void => {
+  if (!consumeStaticRequestAllowance(request)) {
+    response.status(429).json({ error: 'Too many requests for dashboard assets' });
+    return;
+  }
+
+  next();
+};
+
 /**
  * Creates the HTTP routes used by the dashboard API and static frontend.
  */
 export const createDashboardRouter = (dependencies: DashboardDependencies): Router => {
   const router = Router();
+  const spaHtml = fs.readFileSync(path.resolve(dependencies.publicDir, 'index.html'), 'utf8');
 
   router.get('/api/costs', async (request, response, next) => {
     try {
@@ -115,13 +116,8 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
     }
   });
 
-  router.get('*', (request, response) => {
-    if (!consumeStaticRequestAllowance(request)) {
-      response.status(429).json({ error: 'Too many requests for dashboard assets' });
-      return;
-    }
-
-    response.status(200).type('html').send(fallbackHtml);
+  router.get('*', staticRateLimit, (_request, response) => {
+    response.status(200).type('html').send(spaHtml);
   });
 
   return router;
