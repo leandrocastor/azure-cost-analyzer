@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { createServer } from 'node:http';
 
 import request from 'supertest';
@@ -77,6 +78,35 @@ describe('dashboard routes', () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);
     expect(response.text).toContain('Azure Cost Analyzer Dashboard');
+  });
+
+  it('dashboard SPA fetches cost breakdown per grouping', () => {
+    const html = fs.readFileSync(path.resolve(__dirname, '../../src/dashboard/public/index.html'), 'utf8');
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=service')");
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=resource-group')");
+    expect(html).toContain("fetchJSON('/api/costs?period=1&groupBy=location')");
+  });
+
+  it('dashboard SPA renderers avoid innerHTML and handle unknown errors safely', () => {
+    const html = fs.readFileSync(path.resolve(__dirname, '../../src/dashboard/public/index.html'), 'utf8');
+    const idleSection = html.slice(
+      html.indexOf('function renderIdleTable()'),
+      html.indexOf('function renderRecs()'),
+    );
+    const recsSection = html.slice(
+      html.indexOf('function renderRecs()'),
+      html.indexOf('function renderBarChart(containerId, data)'),
+    );
+    const chartSection = html.slice(
+      html.indexOf('function renderBarChart(containerId, data)'),
+      html.indexOf('async function loadAll()'),
+    );
+
+    expect(idleSection).not.toContain('innerHTML');
+    expect(recsSection).not.toContain('innerHTML');
+    expect(chartSection).not.toContain('innerHTML');
+    expect(html).toContain('function errorToMessage(error)');
+    expect(html).toContain('showError(errorToMessage(err));');
   });
 
   it('validates invalid costs query parameters', async () => {
