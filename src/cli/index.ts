@@ -6,9 +6,15 @@ import { argv } from 'node:process';
 import CostsCommand from '@/cli/commands/costs';
 import DashboardCommand from '@/cli/commands/dashboard';
 import DetectCommand from '@/cli/commands/detect';
+import ExportCommand from '@/cli/commands/export';
 import RecommendCommand from '@/cli/commands/recommend';
 
-type CommandConstructor = typeof CostsCommand | typeof DashboardCommand | typeof DetectCommand | typeof RecommendCommand;
+type CommandConstructor =
+  | typeof CostsCommand
+  | typeof DashboardCommand
+  | typeof DetectCommand
+  | typeof ExportCommand
+  | typeof RecommendCommand;
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')) as { version: string };
 
@@ -16,6 +22,7 @@ const commands: Record<string, CommandConstructor> = {
   costs: CostsCommand,
   dashboard: DashboardCommand,
   detect: DetectCommand,
+  export: ExportCommand,
   recommend: RecommendCommand,
 };
 
@@ -28,6 +35,7 @@ Commands:
   detect      Detect idle Azure resources
   recommend   Generate prioritized savings recommendations
   dashboard   Start the dashboard server
+  export      Export a static HTML report (no server required)
 
 Options:
   --help, -h      Show this help message

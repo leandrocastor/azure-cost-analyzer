@@ -68,9 +68,11 @@ vi.mock('@/dashboard/server', () => ({
 import CostsCommand from '@/cli/commands/costs';
 import DashboardCommand from '@/cli/commands/dashboard';
 import DetectCommand from '@/cli/commands/detect';
+import ExportCommand from '@/cli/commands/export';
 import RecommendCommand from '@/cli/commands/recommend';
 
 const outputPath = path.resolve(__dirname, '../fixtures/cost-command-output.csv');
+const reportOutputPath = path.resolve(__dirname, '../fixtures/report-command-output.html');
 
 describe('CLI command classes', () => {
   beforeEach(() => {
@@ -94,11 +96,17 @@ describe('CLI command classes', () => {
     if (existsSync(outputPath)) {
       unlinkSync(outputPath);
     }
+    if (existsSync(reportOutputPath)) {
+      unlinkSync(reportOutputPath);
+    }
   });
 
   afterAll(() => {
     if (existsSync(outputPath)) {
       unlinkSync(outputPath);
+    }
+    if (existsSync(reportOutputPath)) {
+      unlinkSync(reportOutputPath);
     }
   });
 
@@ -200,5 +208,28 @@ describe('CLI command classes', () => {
     expect(spawnMock).toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith('Dashboard available at http://localhost:4321');
     logSpy.mockRestore();
+  });
+
+  it('generates a static HTML report with embedded data', async () => {
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+    expect(costAnalyzerMock.queryCosts).toHaveBeenCalledWith(
+      'sub-3',
+      expect.any(String),
+      expect.any(String),
+      'service',
+    );
+    expect(resourceDetectorMock.detectAll).toHaveBeenCalled();
+    expect(optimizerMock.generateRecommendations).toHaveBeenCalledWith(mockIdleResources);
+    expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining(reportOutputPath));
+
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('<!DOCTYPE html>');
+    expect(html).toContain('"subscriptionId":"sub-3"');
+  });
+
+  it('reports export failures through spinner', async () => {
+    costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('export failed'));
+    await expect(ExportCommand.run(['--output', reportOutputPath])).rejects.toThrow('export failed');
+    expect(spinner.fail).toHaveBeenCalledWith('export failed');
   });
 });

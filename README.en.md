@@ -15,11 +15,29 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 
 ## Installation
 
+There are two ways to run Azure Cost Analyzer, depending on your scenario.
+
+### Option 1 — Standard install (recurring use)
+
+Ideal for development machines or environments where you'll run the CLI frequently.
+
 ```bash
 npm install
 npm run build
 npm install -g .
 ```
+
+### Option 2 — One-off run via Azure Cloud Shell (no install)
+
+Ideal for a quick analysis directly in Azure Cloud Shell, without cloning or permanently installing anything — in the same spirit as [Azure Resource Inventory (ARI)](https://github.com/microsoft/ARI), which runs with a single command after installing the module.
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "$HOME/clouddrive/azure-cost-report.html"
+```
+
+`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity. Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command.
 
 ## Configuration
 
@@ -84,6 +102,16 @@ Dashboard APIs:
 - `GET /api/resources/idle`
 - `GET /api/recommendations`
 - `GET /api/summary`
+
+### 5. Export command
+
+Generates a static HTML report, with the same look as the dashboard, without requiring a running server — ideal for Azure Cloud Shell or hosting as a static site.
+
+```bash
+cost-analyzer export --period 3 --output ./azure-cost-report.html
+```
+
+The generated file already has the data embedded (costs, idle resources, and recommendations) and can be opened directly in a browser or hosted on any static site (Azure Storage Static Website, App Service, etc.).
 
 ## Dashboard screenshot
 
