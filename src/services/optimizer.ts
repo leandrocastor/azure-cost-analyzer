@@ -29,8 +29,8 @@ export class OptimizerService {
         id: randomUUID(),
         type: idleResource.resource.type,
         resourceId: idleResource.resource.id,
-        title: `Optimize ${idleResource.resource.name}`,
-        description: `${idleResource.reason}. ${actionType} can recover approximately $${monthlySavings.toFixed(2)} per month.`,
+        title: `Otimizar ${idleResource.resource.name}`,
+        description: `${idleResource.reason}. ${this.actionDescription(actionType)} recupera aproximadamente ${monthlySavings.toFixed(2)} por mês.`,
         monthlySavings,
         annualSavings,
         risk,
@@ -102,8 +102,22 @@ export class OptimizerService {
     return [...recommendations].sort((left, right) => right.roi - left.roi);
   }
 
-  private pickActionType(resourceType: string): ActionType {
-    if (resourceType.includes('disks') || resourceType.includes('publicIPAddresses')) {
+  /**
+   * Human-readable, Portuguese description of what each action does.
+   */
+  private actionDescription(actionType: ActionType): string {
+    const descriptions: Record<ActionType, string> = {
+      DELETE: 'Excluir o recurso',
+      DOWNSIZE: 'Reduzir o porte do recurso',
+      CHANGE_SKU: 'Alterar o SKU',
+      SCHEDULE: 'Agendar o desligamento fora do horário comercial',
+      MIGRATE: 'Migrar para um tier de menor custo',
+      CLEANUP: 'Remover o recurso órfão',
+    };
+    return descriptions[actionType];
+  }
+
+  private pickActionType(resourceType: string): ActionType {    if (resourceType.includes('disks') || resourceType.includes('publicIPAddresses')) {
       return 'CLEANUP';
     }
     if (resourceType.includes('virtualMachines')) {

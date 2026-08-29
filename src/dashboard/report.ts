@@ -1,4 +1,12 @@
-import type { CostSummary, IdleResource, Recommendation } from '@/models';
+import type {
+  CostDiff,
+  CostSummary,
+  ExecutiveSummary,
+  IdleResource,
+  OwnershipReport,
+  Recommendation,
+  RemediationPlan,
+} from '@/models';
 
 export type StaticReportData = {
   generatedAt: string;
@@ -7,6 +15,10 @@ export type StaticReportData = {
   idleResources: IdleResource[];
   recommendations: Recommendation[];
   warnings?: string[];
+  executiveSummary?: ExecutiveSummary;
+  ownership?: OwnershipReport;
+  diff?: CostDiff | undefined;
+  remediationPlans?: RemediationPlan[];
 };
 
 /**
@@ -41,6 +53,10 @@ export const generateStaticReport = (data: StaticReportData): string => {
     idleResources: data.idleResources,
     recommendations: data.recommendations,
     warnings: data.warnings ?? [],
+    executiveSummary: data.executiveSummary ?? null,
+    ownership: data.ownership ?? null,
+    diff: data.diff ?? null,
+    remediationPlans: data.remediationPlans ?? [],
   });
 
   return `<!DOCTYPE html>
@@ -126,6 +142,56 @@ export const generateStaticReport = (data: StaticReportData): string => {
       .warning-banner h3 { font-size: 0.85rem; color: #fbbf24; margin-bottom: 0.5rem; }
       .warning-banner ul { list-style: disc; padding-left: 1.25rem; }
       .warning-banner li { font-size: 0.8rem; color: #fcd34d; line-height: 1.6; }
+
+      /* Sumário executivo */
+      .exec-summary { background: linear-gradient(135deg, #1e293b, #1a2744); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.75rem; }
+      .exec-summary .exec-tag { display: inline-block; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.15rem 0.6rem; margin-bottom: 0.85rem; }
+      .exec-headline { font-size: 1.15rem; font-weight: 600; line-height: 1.5; margin-bottom: 1rem; }
+      .exec-highlights { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.1rem; }
+      .exec-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.8rem; }
+      .exec-chip .chip-label { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+      .exec-chip .chip-value { font-size: 1rem; font-weight: 600; }
+      .exec-chip.positive .chip-value { color: var(--green); }
+      .exec-chip.negative .chip-value { color: #f87171; }
+      .exec-summary p { font-size: 0.88rem; line-height: 1.7; color: var(--text); margin-bottom: 0.7rem; }
+      .exec-actions { list-style: none; margin-top: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.9rem; }
+      .exec-actions li { font-size: 0.85rem; line-height: 1.7; color: var(--muted); }
+
+      /* Comparativo entre execuções */
+      .diff-summary { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: baseline; margin-bottom: 1.1rem; }
+      .diff-total { font-size: 1.6rem; font-weight: 700; }
+      .diff-total.up { color: #f87171; }
+      .diff-total.down { color: var(--green); }
+      .diff-note { font-size: 0.8rem; color: var(--muted); }
+      .delta-up { color: #f87171; }
+      .delta-down { color: var(--green); }
+      .diff-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
+      .diff-lists h4 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-bottom: 0.5rem; }
+      .diff-lists ul { list-style: none; }
+      .diff-lists li { font-size: 0.82rem; padding: 0.25rem 0; color: var(--text); }
+
+      /* Responsáveis (showback/chargeback) */
+      .coverage-bar { background: var(--surface2); border-radius: 999px; height: 8px; overflow: hidden; margin: 0.5rem 0 1rem; }
+      .coverage-fill { height: 100%; background: var(--green); border-radius: 999px; }
+      .owner-resources { font-size: 0.78rem; color: var(--muted); }
+
+      /* Plano de remediação */
+      .rem-item { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.6rem; overflow: hidden; }
+      .rem-item > summary { cursor: pointer; padding: 0.8rem 1rem; background: var(--surface2); display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; font-size: 0.88rem; }
+      .rem-item > summary::-webkit-details-marker { display: none; }
+      .rem-item > summary::before { content: '▸'; color: var(--muted); }
+      .rem-item[open] > summary::before { content: '▾'; }
+      .rem-body { padding: 1rem; }
+      .rem-body h4 { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0.9rem 0 0.4rem; }
+      .rem-body h4:first-child { margin-top: 0; }
+      .rem-step { margin-bottom: 0.5rem; }
+      .rem-step .step-desc { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.2rem; }
+      pre.code { background: #0b1120; border: 1px solid var(--border); border-radius: 6px; padding: 0.65rem 0.8rem; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.76rem; line-height: 1.6; color: #cbd5e1; white-space: pre; }
+      .rem-tabs { display: flex; gap: 0.4rem; margin-bottom: 0.5rem; }
+      .rem-tabs button { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: 0.3rem 0.7rem; font-size: 0.75rem; cursor: pointer; font-family: inherit; }
+      .rem-tabs button.active { color: var(--text); border-color: var(--accent); }
+      .downtime-flag { color: #fbbf24; font-size: 0.75rem; }
+      .section-hint { font-size: 0.82rem; color: var(--muted); margin-bottom: 0.9rem; line-height: 1.6; }
     </style>
   </head>
   <body>
@@ -135,6 +201,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     </header>
     <main>
       <div id="report-warnings"></div>
+      <div id="exec-summary"></div>
       <div class="kpi-grid">
         <div class="kpi-card cost">
           <div class="label">Custo Total</div>
@@ -174,9 +241,33 @@ export const generateStaticReport = (data: StaticReportData): string => {
         </div>
       </section>
 
+      <section id="diff-section" hidden>
+        <h2>Comparativo com a Execução Anterior</h2>
+        <div class="card">
+          <p class="section-hint">Mostra o que mudou desde o último relatório e qual service ou resource group causou a variação.</p>
+          <div id="diff-container"></div>
+        </div>
+      </section>
+
+      <section id="ownership-section" hidden>
+        <h2>Desperdício por Responsável</h2>
+        <div class="card">
+          <p class="section-hint">Atribui o desperdício ao responsável identificado pelas tags de owner/team/cost center. Quando não há tag, o resource group é usado como fronteira de responsabilidade.</p>
+          <div id="ownership-container"></div>
+        </div>
+      </section>
+
       <section>
         <h2>Recomendações</h2>
         <div class="card" id="recs-container"></div>
+      </section>
+
+      <section id="remediation-section" hidden>
+        <h2>Plano de Remediação</h2>
+        <div class="card">
+          <p class="section-hint">Comandos prontos para executar, validar e reverter cada recomendação. O script <code>apply-remediation.sh</code> gerado ao lado deste relatório executa tudo em modo simulação por padrão.</p>
+          <div id="remediation-container"></div>
+        </div>
       </section>
 
       <section>
@@ -332,6 +423,192 @@ export const generateStaticReport = (data: StaticReportData): string => {
         container.innerHTML = bars;
       }
 
+      function renderExecutiveSummary() {
+        const data = REPORT.executiveSummary;
+        if (!data) return;
+
+        const chips = (data.highlights || []).map(function (item) {
+          return '<div class="exec-chip ' + esc(item.tone || 'neutral') + '">'
+            + '<span class="chip-label">' + esc(item.label) + '</span>'
+            + '<span class="chip-value">' + esc(item.value) + '</span>'
+            + '</div>';
+        }).join('');
+
+        const paragraphs = (data.paragraphs || []).map(function (text) {
+          return '<p>' + esc(text) + '</p>';
+        }).join('');
+
+        const actions = (data.topActions || []).length
+          ? '<ul class="exec-actions">' + data.topActions.map(function (action) {
+              return '<li>' + esc(action) + '</li>';
+            }).join('') + '</ul>'
+          : '';
+
+        document.getElementById('exec-summary').innerHTML =
+          '<div class="exec-summary">'
+          + '<span class="exec-tag">Sumário executivo</span>'
+          + '<div class="exec-headline">' + esc(data.headline) + '</div>'
+          + (chips ? '<div class="exec-highlights">' + chips + '</div>' : '')
+          + paragraphs
+          + actions
+          + '</div>';
+      }
+
+      function renderDeltaRows(rows) {
+        if (!rows || !rows.length) {
+          return '<div class="empty">Sem variações relevantes.</div>';
+        }
+        const body = rows.map(function (row) {
+          const cls = row.delta > 0 ? 'delta-up' : 'delta-down';
+          const sign = row.delta > 0 ? '+' : '';
+          const pct = row.percentChange == null
+            ? '—'
+            : (row.percentChange > 0 ? '+' : '') + Number(row.percentChange).toFixed(1) + '%';
+          return '<tr>'
+            + '<td><strong>' + esc(row.key) + '</strong></td>'
+            + '<td>' + fmtFull(row.previous) + '</td>'
+            + '<td>' + fmtFull(row.current) + '</td>'
+            + '<td class="' + cls + '">' + sign + fmtFull(row.delta) + '</td>'
+            + '<td class="' + cls + '">' + esc(pct) + '</td>'
+            + '</tr>';
+        }).join('');
+        return '<table><thead><tr><th>Item</th><th>Anterior</th><th>Atual</th><th>Variação</th><th>%</th></tr></thead>'
+          + '<tbody>' + body + '</tbody></table>';
+      }
+
+      function renderDiff() {
+        const diff = REPORT.diff;
+        if (!diff) return;
+        document.getElementById('diff-section').hidden = false;
+
+        const cls = diff.totalDelta > 0 ? 'up' : diff.totalDelta < 0 ? 'down' : '';
+        const sign = diff.totalDelta > 0 ? '+' : '';
+        const pct = diff.totalPercentChange == null
+          ? ''
+          : ' (' + (diff.totalPercentChange > 0 ? '+' : '') + Number(diff.totalPercentChange).toFixed(1) + '%)';
+
+        const lists = '<div class="diff-lists">'
+          + '<div><h4>Novos recursos ociosos (' + diff.newIdleResources.length + ')</h4><ul>'
+          + (diff.newIdleResources.length
+              ? diff.newIdleResources.slice(0, 10).map(function (name) { return '<li>' + esc(name) + '</li>'; }).join('')
+              : '<li class="diff-note">Nenhum.</li>')
+          + '</ul></div>'
+          + '<div><h4>Ociosidade resolvida (' + diff.resolvedIdleResources.length + ')</h4><ul>'
+          + (diff.resolvedIdleResources.length
+              ? diff.resolvedIdleResources.slice(0, 10).map(function (name) { return '<li>' + esc(name) + '</li>'; }).join('')
+              : '<li class="diff-note">Nenhum.</li>')
+          + '</ul></div>'
+          + '</div>';
+
+        document.getElementById('diff-container').innerHTML =
+          '<div class="diff-summary">'
+          + '<div class="diff-total ' + cls + '">' + sign + fmtFull(diff.totalDelta) + esc(pct) + '</div>'
+          + '<div class="diff-note">'
+          + esc(fmtFull(diff.totalPrevious) + ' → ' + fmtFull(diff.totalCurrent))
+          + ' · relatório anterior de ' + esc(new Date(diff.previousGeneratedAt).toLocaleString('pt-BR'))
+          + ' · ' + esc(diff.previousPeriod) + ' vs ' + esc(diff.currentPeriod)
+          + '</div>'
+          + '</div>'
+          + '<h4 style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.5rem">Por Service</h4>'
+          + renderDeltaRows(diff.byService)
+          + '<h4 style="font-size:0.78rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin:1.2rem 0 0.5rem">Por Resource Group</h4>'
+          + renderDeltaRows(diff.byResourceGroup)
+          + lists;
+      }
+
+      function renderOwnership() {
+        const ownership = REPORT.ownership;
+        if (!ownership || !ownership.owners.length) return;
+        document.getElementById('ownership-section').hidden = false;
+
+        const coverage = Math.round((ownership.tagCoverage || 0) * 100);
+        const rows = ownership.owners.map(function (owner) {
+          const share = Math.round((owner.shareOfTotal || 0) * 100);
+          const badge = owner.attribution === 'tag'
+            ? '<span class="badge low">tag ' + esc(owner.attributionKey) + '</span>'
+            : owner.attribution === 'resource-group'
+              ? '<span class="badge medium">resource group</span>'
+              : '<span class="badge high">sem tag</span>';
+          const top = owner.topResources.map(function (resource) {
+            return esc(resource.name) + ' (' + fmtFull(resource.monthlySavings) + ')';
+          }).join(', ');
+          return '<tr>'
+            + '<td><strong>' + esc(owner.owner) + '</strong></td>'
+            + '<td>' + badge + '</td>'
+            + '<td>' + esc(owner.resourceCount) + '</td>'
+            + '<td style="color:var(--green)">' + fmtFull(owner.monthlyWaste) + '</td>'
+            + '<td style="color:var(--green)">' + fmtFull(owner.annualWaste) + '</td>'
+            + '<td>' + share + '%</td>'
+            + '<td class="owner-resources">' + top + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('ownership-container').innerHTML =
+          '<div class="diff-note">Cobertura de tag de responsável: <strong>' + coverage + '%</strong> ('
+          + ownership.taggedResourceCount + ' com tag, ' + ownership.untaggedResourceCount + ' sem tag)</div>'
+          + '<div class="coverage-bar"><div class="coverage-fill" style="width:' + coverage + '%"></div></div>'
+          + '<table><thead><tr><th>Responsável</th><th>Origem</th><th>Recursos</th><th>Desperdício mensal</th>'
+          + '<th>Desperdício anual</th><th>Participação</th><th>Principais recursos</th></tr></thead>'
+          + '<tbody>' + rows + '</tbody></table>';
+      }
+
+      function renderSteps(steps) {
+        if (!steps || !steps.length) {
+          return '<div class="diff-note">Nenhum comando necessário.</div>';
+        }
+        return steps.map(function (item) {
+          return '<div class="rem-step">'
+            + '<div class="step-desc">' + esc(item.description) + '</div>'
+            + '<pre class="code">' + esc(item.command) + '</pre>'
+            + '</div>';
+        }).join('');
+      }
+
+      function renderRemediation() {
+        const plans = REPORT.remediationPlans || [];
+        if (!plans.length) return;
+        document.getElementById('remediation-section').hidden = false;
+
+        const items = plans.map(function (plan, index) {
+          const risk = (plan.risk || 'medium').toLowerCase();
+          const downtime = plan.requiresDowntime
+            ? '<span class="downtime-flag">⚠ causa indisponibilidade</span>'
+            : '';
+          return '<details class="rem-item">'
+            + '<summary>'
+            + '<strong>' + esc(plan.resourceName) + '</strong>'
+            + '<span class="badge new">' + esc(ACTION_LABELS[plan.actionType] || plan.actionType) + '</span>'
+            + '<span class="badge ' + esc(risk) + '">Risco: ' + esc(LEVEL_LABELS[risk] || risk) + '</span>'
+            + '<span style="color:var(--green)">' + fmtFull(plan.monthlySavings) + '/mês</span>'
+            + downtime
+            + '</summary>'
+            + '<div class="rem-body">'
+            + '<p class="section-hint">' + esc(plan.summary) + '</p>'
+            + '<h4>1. Verificações prévias</h4>' + renderSteps(plan.preChecks)
+            + '<h4>2. Aplicação</h4>' + renderSteps(plan.apply)
+            + '<h4>3. Rollback</h4>' + renderSteps(plan.rollback)
+            + '<h4>4. Infrastructure as Code</h4>'
+            + '<div class="rem-tabs">'
+            + '<button class="active" onclick="switchIac(' + index + ', \\'terraform\\', this)">Terraform</button>'
+            + '<button onclick="switchIac(' + index + ', \\'bicep\\', this)">Bicep</button>'
+            + '</div>'
+            + '<pre class="code" id="iac-' + index + '">' + esc(plan.iac.terraform) + '</pre>'
+            + '</div>'
+            + '</details>';
+        }).join('');
+
+        document.getElementById('remediation-container').innerHTML = items;
+      }
+
+      function switchIac(index, flavor, button) {
+        const plan = (REPORT.remediationPlans || [])[index];
+        if (!plan) return;
+        document.getElementById('iac-' + index).textContent = plan.iac[flavor] || '';
+        const buttons = button.parentElement.querySelectorAll('button');
+        for (const item of buttons) item.classList.remove('active');
+        button.classList.add('active');
+      }
+
       document.getElementById('report-meta').textContent =
         'Subscription ' + REPORT.subscriptionId + ' · Gerado em ' + new Date(REPORT.generatedAt).toLocaleString('pt-BR');
 
@@ -348,8 +625,12 @@ export const generateStaticReport = (data: StaticReportData): string => {
       renderKPI('kpi-recs', String(REPORT.summary.recommendationCount));
       renderKPI('kpi-savings', fmt(REPORT.summary.annualSavingsOpportunity));
 
+      renderExecutiveSummary();
+      renderDiff();
+      renderOwnership();
       renderIdleTable();
       renderRecs();
+      renderRemediation();
       renderBarChart('chart-service', REPORT.costs.byService);
       renderBarChart('chart-rg', REPORT.costs.byResourceGroup);
       renderBarChart('chart-loc', REPORT.costs.byLocation);

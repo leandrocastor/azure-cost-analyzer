@@ -5,10 +5,14 @@ import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import type { CostSummary, IdleResource } from '@/models';
+import type { CostDiff, CostSummary, IdleResource } from '@/models';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
+import { CostDiffService } from '@/services/cost-diff';
+import { ExecutiveSummaryService } from '@/services/executive-summary';
 import { OptimizerService } from '@/services/optimizer';
+import { OwnershipService } from '@/services/ownership';
+import { RemediationService } from '@/services/remediation';
 import { ResourceDetectorService } from '@/services/resource-detector';
 
 /**
@@ -92,6 +96,19 @@ export default class ExportCommand extends Command {
       default: 1,
     }),
     output: Flags.string({ char: 'o', description: 'Output HTML file path' }),
+    compare: Flags.string({
+      char: 'c',
+      description:
+        'Path to a previously generated report (HTML or JSON) to compare against, revealing what changed since then.',
+    }),
+    'owner-tags': Flags.string({
+      description:
+        'Comma-separated tag keys used to attribute waste to an owner (default: owner, team, costCenter, ...).',
+    }),
+    'no-remediation': Flags.boolean({
+      description: 'Skip generating the executable remediation plan and apply-remediation.sh script.',
+      default: false,
+    }),
   };
 
   /**
@@ -171,17 +188,75 @@ export default class ExportCommand extends Command {
           ? analyzedSubscriptions[0].id
           : `${analyzedSubscriptions.length} subscriptions: ${analyzedSubscriptions.map((subscription) => subscription.displayName).join(', ')}`;
 
+      const generatedAt = new Date().toISOString();
+
+      const ownerTagKeys = flags['owner-tags']
+        ?.split(',')
+        .map((key) => key.trim())
+        .filter(Boolean);
+      const ownership = new OwnershipService(
+        ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
+      ).buildReport(idleResources);
+
+      // Comparing against a previous report is best-effort: a missing or malformed
+      // baseline must never prevent the current report from being produced.
+      let diff: CostDiff | undefined;
+      if (flags.compare) {
+        spinner.text = `Comparing against ${flags.compare}...`;
+        try {
+          const costDiffService = new CostDiffService();
+          const previous = await costDiffService.loadSnapshot(path.resolve(flags.compare));
+          diff = costDiffService.compare(previous, {
+            generatedAt,
+            subscriptionId: subscriptionLabel,
+            costs,
+            idleResources,
+          });
+        } catch (error: unknown) {
+          warnings.push(
+            `Comparativo indisponível: ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+          );
+        }
+      }
+
+      const remediationPlans = flags['no-remediation']
+        ? []
+        : new RemediationService().buildPlans(recommendations, idleResources);
+
+      const executiveSummary = new ExecutiveSummaryService().build({
+        costs,
+        idleResources,
+        recommendations,
+        ownership,
+        diff,
+        subscriptionCount: analyzedSubscriptions.length,
+      });
+
       const html = generateStaticReport({
-        generatedAt: new Date().toISOString(),
+        generatedAt,
         subscriptionId: subscriptionLabel,
         costs,
         idleResources,
         recommendations,
         warnings,
+        executiveSummary,
+        ownership,
+        diff,
+        remediationPlans,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());
       await writeFile(outputPath, html, 'utf8');
+
+      let scriptPath: string | undefined;
+      if (remediationPlans.length > 0) {
+        scriptPath = path.join(path.dirname(outputPath), 'apply-remediation.sh');
+        await writeFile(
+          scriptPath,
+          new RemediationService().buildApplyScript(remediationPlans),
+          { encoding: 'utf8', mode: 0o755 },
+        );
+      }
 
       spinner.succeed(
         `Report generated at ${outputPath} (${analyzedSubscriptions.length} subscription${analyzedSubscriptions.length === 1 ? '' : 's'} analyzed)`,
@@ -192,6 +267,11 @@ export default class ExportCommand extends Command {
       }
 
       this.log('Open it directly in a browser, or host the file as-is (Azure Storage static website, App Service, etc.).');
+      if (scriptPath) {
+        this.log(
+          `Remediation script written to ${scriptPath} — it runs in dry-run mode by default; use APPLY=true to execute.`,
+        );
+      }
     } catch (error: unknown) {
       spinner.fail(error instanceof Error ? error.message : 'Report generation failed');
       throw error;

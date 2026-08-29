@@ -107,7 +107,7 @@ export class ResourceDetectorService {
         const metrics = await this.getMetrics(resource.id, 'Percentage CPU', 'PT1H', 'avg');
         const avgCpu = this.metricAverage(metrics);
         if (avgCpu < 5) {
-          idleResources.push(this.buildIdleResource(resource, 'CPU below 5% for 7 days', metrics, 92, 120));
+          idleResources.push(this.buildIdleResource(resource, 'CPU média abaixo de 5% nos últimos 7 dias', metrics, 92, 120));
         }
       }
 
@@ -128,7 +128,7 @@ export class ResourceDetectorService {
         const metrics = await this.getMetrics(resource.id, 'Requests', 'P1D', 'sum');
         const dailyRequests = this.metricAverage(metrics);
         if (dailyRequests < 100) {
-          idleResources.push(this.buildIdleResource(resource, 'Requests below 100/day', metrics, 78, 65));
+          idleResources.push(this.buildIdleResource(resource, 'Menos de 100 requisições por dia', metrics, 78, 65));
         }
       }
 
@@ -149,7 +149,7 @@ export class ResourceDetectorService {
         const metrics = await this.getMetrics(resource.id, 'Transactions', 'P1D', 'sum');
         const avgTransactions = this.metricAverage(metrics);
         if (avgTransactions === 0) {
-          idleResources.push(this.buildIdleResource(resource, 'No storage transactions for 30 days', metrics, 85, 40));
+          idleResources.push(this.buildIdleResource(resource, 'Sem transações de storage nos últimos 30 dias', metrics, 85, 40));
         }
       }
 
@@ -175,7 +175,7 @@ export class ResourceDetectorService {
           const metrics = await this.getMetrics(resource.id, 'dtu_consumption_percent', 'PT1H', 'avg');
           const avgDtu = this.metricAverage(metrics);
           if (avgDtu < 5) {
-            idleResources.push(this.buildIdleResource(resource, 'DTU below 5%', metrics, 80, 90));
+            idleResources.push(this.buildIdleResource(resource, 'Consumo de DTU abaixo de 5%', metrics, 80, 90));
           }
         }
       }
@@ -192,7 +192,7 @@ export class ResourceDetectorService {
       const disks = await toArray(this.computeClient.disks.list());
       return disks
         .filter((disk) => !Reflect.get(disk.properties ?? {}, 'managedBy'))
-        .map((disk) => this.buildIdleResource(this.normalizeResource(disk, 'Microsoft.Compute/disks'), 'Disk is unattached', [], 95, 30));
+        .map((disk) => this.buildIdleResource(this.normalizeResource(disk, 'Microsoft.Compute/disks'), 'Disco não está anexado a nenhuma VM', [], 95, 30));
     }, 'Failed to detect unattached disks');
   }
 
@@ -204,7 +204,7 @@ export class ResourceDetectorService {
       const ips = await toArray(this.networkClient.publicIPAddresses.listAll());
       return ips
         .filter((ip) => !Reflect.get(ip.properties ?? {}, 'ipConfiguration'))
-        .map((ip) => this.buildIdleResource(this.normalizeResource(ip, 'Microsoft.Network/publicIPAddresses'), 'Public IP is not attached', [], 88, 15));
+        .map((ip) => this.buildIdleResource(this.normalizeResource(ip, 'Microsoft.Network/publicIPAddresses'), 'Public IP não está associado a nenhum recurso', [], 88, 15));
     }, 'Failed to detect unused public IPs');
   }
 
@@ -219,7 +219,7 @@ export class ResourceDetectorService {
           const backendPools = Reflect.get(lb.properties ?? {}, 'backendAddressPools');
           return !Array.isArray(backendPools) || backendPools.length === 0;
         })
-        .map((lb) => this.buildIdleResource(this.normalizeResource(lb, 'Microsoft.Network/loadBalancers'), 'Load balancer has no backend pools', [], 84, 25));
+        .map((lb) => this.buildIdleResource(this.normalizeResource(lb, 'Microsoft.Network/loadBalancers'), 'Load balancer sem backend pools configurados', [], 84, 25));
     }, 'Failed to detect unused load balancers');
   }
 

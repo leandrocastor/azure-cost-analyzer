@@ -10,6 +10,10 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 - Cost trend analysis, anomaly detection, and simple forecasting
 - Idle resource detection for VMs, App Services, Storage, SQL, disks, public IPs, and load balancers
 - Prioritized optimization recommendations with ROI, risk, and effort scoring
+- **Automatic executive summary** in plain language at the top of the report
+- **Executable remediation plan**: ready-to-run `az` commands with pre-checks, rollback and equivalent Terraform/Bicep snippets, plus an `apply-remediation.sh` script that is dry-run by default
+- **Run-to-run comparison** (cost diff): what changed since the last report and which service or resource group drove it
+- **Waste by owner** (showback/chargeback): waste attributed through owner/team/cost center tags, with a tag coverage indicator
 - Express dashboard API with static frontend placeholder
 - Strict TypeScript, Zod validation, Winston logging, Vitest coverage, ESLint, and Prettier
 
@@ -111,15 +115,77 @@ Dashboard APIs:
 
 ### 5. Export command
 
-Generates a static HTML report, with the same look as the dashboard, without requiring a running server — ideal for Azure Cloud Shell or hosting as a static site.
+Generates a static HTML report, with the same look as the dashboard, without requiring a running server — ideal for Azure Cloud Shell or hosting as a static site. The report itself is rendered in Brazilian Portuguese; only Azure resource and service names are kept in English.
 
 ```bash
 cost-analyzer export --period 3 --output ./azure-cost-report.html
 ```
 
-The generated file already has the data embedded (costs, idle resources, and recommendations) and can be opened directly in a browser or hosted on any static site (Azure Storage Static Website, App Service, etc.).
+The generated file already has the data embedded (costs, idle resources, recommendations, executive summary, waste by owner, and the remediation plan) and can be opened directly in a browser or hosted on any static site (Azure Storage Static Website, App Service, etc.).
 
 Without `--subscription`, every enabled subscription visible to the authenticated identity is analyzed and consolidated into the report. To scope it to a single subscription, use `--subscription <id>`.
+
+#### Flags
+
+| Flag | Description |
+| --- | --- |
+| `--period`, `-p` | Trailing months to analyze (1 to 12, default 1) |
+| `--output`, `-o` | Output HTML file path |
+| `--subscription`, `-s` | Restrict the analysis to a single subscription |
+| `--compare`, `-c` | Path to a previous report (HTML or JSON) to diff against |
+| `--owner-tags` | Comma-separated tag keys used to attribute waste to an owner |
+| `--no-remediation` | Skip the remediation plan and the `apply-remediation.sh` script |
+
+#### Remediation plan
+
+An `apply-remediation.sh` file is written next to the HTML report. It **changes nothing by default**: it runs in dry-run mode and only prints the commands.
+
+```bash
+# 1. Review what would run
+./apply-remediation.sh
+
+# 2. Actually execute
+APPLY=true ./apply-remediation.sh
+
+# 3. Or apply to a single resource
+APPLY=true ONLY=vm-web01 ./apply-remediation.sh
+```
+
+High-risk actions require the operator to type `CONFIRMO` before proceeding. Every block includes the rollback commands as comments.
+
+#### Run-to-run comparison
+
+Keep the generated reports and diff them to see how the environment evolves:
+
+```bash
+cost-analyzer export --period 1 --output ./report-august.html
+# ... one month later ...
+cost-analyzer export --period 1 --output ./report-september.html --compare ./report-august.html
+```
+
+The report then shows the total variation, the largest movements by service and resource group, and which idle resources appeared or were resolved.
+
+#### Waste by owner
+
+Waste is attributed to an owner from the resource tags (`owner`, `team`, `costCenter`, and others, case-insensitive). When no tag is present, the resource group is used as the ownership boundary. To use your own convention:
+
+```bash
+cost-analyzer export --owner-tags responsavel,cost-center
+```
+
+The report also shows owner tag coverage, the key maturity indicator for enabling internal chargeback.
+
+## Roadmap
+
+Planned differentiators:
+
+- [ ] **Cost-in-Pull-Request GitHub Action** — comments the estimated cost impact of IaC changes before merge
+- [ ] **Unit economics** — cost per customer, per request, or per environment, derived from tags and application metrics
+- [ ] **Consolidated multi-tenant view** — a single report covering several tenants, for CSPs and MSPs
+- [ ] **Scheduled Teams and Slack digest** — periodic summary with history published to a static site
+- [ ] **Anomaly detection with root cause** — pinpoints which resource or resource group caused a spend spike
+- [ ] **Commitment simulator** — compares Reserved Instances, Savings Plans, and Spot, including payback
+- [ ] **FinOps maturity score** — a 0 to 100 score for the tenant, tracked across runs
 
 ## Dashboard screenshot
 
