@@ -5,7 +5,7 @@ import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import type { CostSummary } from '@/models';
+import type { CostSummary, IdleResource } from '@/models';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
 import { OptimizerService } from '@/services/optimizer';
@@ -53,7 +53,7 @@ const addBucket = (target: Record<string, number>, source: Record<string, number
  */
 const mergeCostSummaries = (summaries: CostSummary[]): CostSummary => {
   const merged: CostSummary = {
-    period: summaries[0]?.period ?? '',
+    period: summaries[0]?.period ?? 'N/A',
     totalAmount: 0,
     currency: summaries[0]?.currency ?? 'USD',
     byService: {},
@@ -113,33 +113,63 @@ export default class ExportCommand extends Command {
       );
 
       const perSubscriptionCosts: CostSummary[] = [];
-      const idleResources = [];
+      const idleResources: IdleResource[] = [];
+      const warnings: string[] = [];
+      const analyzedSubscriptions: AccessibleSubscription[] = [];
 
       for (const [index, subscription] of subscriptions.entries()) {
-        spinner.text = `Analyzing subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
+        const progress = `subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
         const resourceDetector = new ResourceDetectorService(azureClient, subscription.id);
+        let analyzed = false;
 
-        const [costs, detected] = await Promise.all([
-          costAnalyzer.queryCosts(
-            subscription.id,
-            startDate.toISOString().slice(0, 10),
-            endDate.toISOString().slice(0, 10),
-            'service',
-          ),
-          resourceDetector.detectAll(),
-        ]);
+        // Requests are issued sequentially rather than in parallel: Azure Cost
+        // Management and Monitor throttle aggressively, and bursting across several
+        // subscriptions at once is what triggers HTTP 429 responses.
+        spinner.text = `Querying costs for ${progress}`;
+        try {
+          perSubscriptionCosts.push(
+            await costAnalyzer.queryCosts(
+              subscription.id,
+              startDate.toISOString().slice(0, 10),
+              endDate.toISOString().slice(0, 10),
+              'service',
+            ),
+          );
+          analyzed = true;
+        } catch (error: unknown) {
+          warnings.push(
+            `Costs unavailable for "${subscription.displayName}": ${error instanceof Error ? error.message : 'unknown error'}`,
+          );
+        }
 
-        perSubscriptionCosts.push(costs);
-        idleResources.push(...detected);
+        spinner.text = `Detecting idle resources for ${progress}`;
+        try {
+          idleResources.push(...(await resourceDetector.detectAll()));
+          analyzed = true;
+        } catch (error: unknown) {
+          warnings.push(
+            `Idle resource detection unavailable for "${subscription.displayName}": ${error instanceof Error ? error.message : 'unknown error'}`,
+          );
+        }
+
+        if (analyzed) {
+          analyzedSubscriptions.push(subscription);
+        }
+      }
+
+      if (analyzedSubscriptions.length === 0) {
+        throw new Error(
+          `No data could be collected from any subscription. ${warnings.join(' | ')}`,
+        );
       }
 
       spinner.text = 'Generating recommendations and rendering report...';
       const recommendations = await optimizer.generateRecommendations(idleResources);
       const costs = mergeCostSummaries(perSubscriptionCosts);
       const subscriptionLabel =
-        subscriptions.length === 1 && subscriptions[0]
-          ? subscriptions[0].id
-          : `${subscriptions.length} subscriptions: ${subscriptions.map((subscription) => subscription.displayName).join(', ')}`;
+        analyzedSubscriptions.length === 1 && analyzedSubscriptions[0]
+          ? analyzedSubscriptions[0].id
+          : `${analyzedSubscriptions.length} subscriptions: ${analyzedSubscriptions.map((subscription) => subscription.displayName).join(', ')}`;
 
       const html = generateStaticReport({
         generatedAt: new Date().toISOString(),
@@ -147,14 +177,20 @@ export default class ExportCommand extends Command {
         costs,
         idleResources,
         recommendations,
+        warnings,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());
       await writeFile(outputPath, html, 'utf8');
 
       spinner.succeed(
-        `Report generated at ${outputPath} (${subscriptions.length} subscription${subscriptions.length === 1 ? '' : 's'} analyzed)`,
+        `Report generated at ${outputPath} (${analyzedSubscriptions.length} subscription${analyzedSubscriptions.length === 1 ? '' : 's'} analyzed)`,
       );
+
+      for (const warning of warnings) {
+        this.warn(warning);
+      }
+
       this.log('Open it directly in a browser, or host the file as-is (Azure Storage static website, App Service, etc.).');
     } catch (error: unknown) {
       spinner.fail(error instanceof Error ? error.message : 'Report generation failed');

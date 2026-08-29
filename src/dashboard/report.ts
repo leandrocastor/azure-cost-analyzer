@@ -6,6 +6,7 @@ export type StaticReportData = {
   costs: CostSummary;
   idleResources: IdleResource[];
   recommendations: Recommendation[];
+  warnings?: string[];
 };
 
 /**
@@ -39,6 +40,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     costs: data.costs,
     idleResources: data.idleResources,
     recommendations: data.recommendations,
+    warnings: data.warnings ?? [],
   });
 
   return `<!DOCTYPE html>
@@ -120,6 +122,10 @@ export const generateStaticReport = (data: StaticReportData): string => {
         .bar-row { grid-template-columns: 80px 1fr 55px; }
         .rec-item { grid-template-columns: 1fr; }
       }
+      .warning-banner { background: #3a2a12; border: 1px solid #a16207; border-radius: 8px; padding: 0.85rem 1rem; margin-bottom: 1.5rem; }
+      .warning-banner h3 { font-size: 0.85rem; color: #fbbf24; margin-bottom: 0.5rem; }
+      .warning-banner ul { list-style: disc; padding-left: 1.25rem; }
+      .warning-banner li { font-size: 0.8rem; color: #fcd34d; line-height: 1.6; }
     </style>
   </head>
   <body>
@@ -128,6 +134,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
       <span id="report-meta"></span>
     </header>
     <main>
+      <div id="report-warnings"></div>
       <div class="kpi-grid">
         <div class="kpi-card cost">
           <div class="label">Total Cost</div>
@@ -308,6 +315,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
 
       document.getElementById('report-meta').textContent =
         'Subscription ' + REPORT.subscriptionId + ' · Generated ' + new Date(REPORT.generatedAt).toLocaleString();
+
+      const warnings = REPORT.warnings || [];
+      if (warnings.length) {
+        document.getElementById('report-warnings').innerHTML =
+          '<div class="warning-banner"><h3>Partial data</h3><ul>'
+          + warnings.map(function (warning) { return '<li>' + esc(warning) + '</li>'; }).join('')
+          + '</ul></div>';
+      }
 
       renderKPI('kpi-cost', fmt(REPORT.summary.totalCost), REPORT.costs.period + ' (' + REPORT.summary.currency + ')');
       renderKPI('kpi-idle', String(REPORT.summary.idleResourceCount));
