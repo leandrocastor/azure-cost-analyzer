@@ -5,9 +5,10 @@ import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import type { CostDiff, CostSummary, IdleResource } from '@/models';
+import type { CostDiff, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
+import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
 import { OptimizerService } from '@/services/optimizer';
@@ -15,6 +16,9 @@ import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
 import { ResourceDetectorService } from '@/services/resource-detector';
 import { costManagementQpuLimiter } from '@/utils/qpu-limiter';
+import { InactionCostService } from '@/services/inaction-cost';
+import { PricingService } from '@/services/pricing';
+import { WafScorecardService } from '@/services/waf-scorecard';
 
 /**
  * Builds a default, timestamped output filename for the generated report.
@@ -106,6 +110,9 @@ export default class ExportCommand extends Command {
       description:
         'Comma-separated tag keys used to attribute waste to an owner (default: owner, team, costCenter, ...).',
     }),
+    currency: Flags.string({
+      description: 'Currency for retail price lookups (ISO code, e.g. BRL). Defaults to the billing currency reported by Azure.',
+    }),
     'no-remediation': Flags.boolean({
       description: 'Skip generating the executable remediation plan and apply-remediation.sh script.',
       default: false,
@@ -134,6 +141,13 @@ export default class ExportCommand extends Command {
       const idleResources: IdleResource[] = [];
       const warnings: string[] = [];
       const analyzedSubscriptions: AccessibleSubscription[] = [];
+      const inventory: Resource[] = [];
+
+      // Pricing is looked up in the currency Azure bills the tenant in, which is only
+      // known after the first cost query, so the service is created lazily.
+      let pricingService: PricingService | undefined = flags.currency
+        ? new PricingService({ currency: flags.currency })
+        : undefined;
 
       // Cost Management enforces its quota per tenant, so a wait triggered by one
       // subscription is surfaced as progress instead of looking like a freeze.
@@ -147,7 +161,6 @@ export default class ExportCommand extends Command {
 
       for (const [index, subscription] of subscriptions.entries()) {
         const progress = `subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
-        const resourceDetector = new ResourceDetectorService(azureClient, subscription.id);
         let analyzed = false;
 
         // Requests are issued sequentially rather than in parallel: Azure Cost
@@ -155,14 +168,14 @@ export default class ExportCommand extends Command {
         // subscriptions at once is what triggers HTTP 429 responses.
         spinner.text = `Querying costs for ${progress}`;
         try {
-          perSubscriptionCosts.push(
-            await costAnalyzer.queryCosts(
-              subscription.id,
-              startDate.toISOString().slice(0, 10),
-              endDate.toISOString().slice(0, 10),
-              'service',
-            ),
+          const summary = await costAnalyzer.queryCosts(
+            subscription.id,
+            startDate.toISOString().slice(0, 10),
+            endDate.toISOString().slice(0, 10),
+            'service',
           );
+          perSubscriptionCosts.push(summary);
+          pricingService ??= new PricingService({ currency: summary.currency });
           analyzed = true;
         } catch (error: unknown) {
           warnings.push(
@@ -171,6 +184,7 @@ export default class ExportCommand extends Command {
         }
 
         spinner.text = `Detecting idle resources for ${progress}`;
+        const resourceDetector = new ResourceDetectorService(azureClient, subscription.id, pricingService);
         try {
           idleResources.push(...(await resourceDetector.detectAll()));
           analyzed = true;
@@ -178,6 +192,14 @@ export default class ExportCommand extends Command {
           warnings.push(
             `Detecção de recursos ociosos indisponível para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
           );
+        }
+
+        // The inventory only feeds governance checks, so a failure here must not
+        // discard the detection results that were already gathered successfully.
+        try {
+          inventory.push(...resourceDetector.getInventory());
+        } catch {
+          // Governance checks simply see a smaller sample.
         }
 
         if (analyzed) {
@@ -212,11 +234,13 @@ export default class ExportCommand extends Command {
       // Comparing against a previous report is best-effort: a missing or malformed
       // baseline must never prevent the current report from being produced.
       let diff: CostDiff | undefined;
+      let previousSnapshot: ReportSnapshot | undefined;
       if (flags.compare) {
         spinner.text = `Comparing against ${flags.compare}...`;
         try {
           const costDiffService = new CostDiffService();
           const previous = await costDiffService.loadSnapshot(path.resolve(flags.compare));
+          previousSnapshot = previous;
           diff = costDiffService.compare(previous, {
             generatedAt,
             subscriptionId: subscriptionLabel,
@@ -229,6 +253,22 @@ export default class ExportCommand extends Command {
           );
         }
       }
+
+      // Reuses the same baseline as the cost diff: a recommendation that survived
+      // from one report to the next is quantified debt, not a fresh suggestion.
+      let inaction: InactionCost | undefined;
+      if (previousSnapshot) {
+        inaction = new InactionCostService().analyze(previousSnapshot, idleResources);
+      }
+
+      const waf = new WafScorecardService().evaluate({
+        costs,
+        idleResources,
+        recommendations,
+        resources: inventory,
+        ownerTagKeys: ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
+        subscriptionCount: analyzedSubscriptions.length,
+      });
 
       const remediationPlans = flags['no-remediation']
         ? []
@@ -254,6 +294,8 @@ export default class ExportCommand extends Command {
         ownership,
         diff,
         remediationPlans,
+        waf,
+        inaction,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());

@@ -29,6 +29,7 @@ const costAnalyzerMock = vi.hoisted(() => ({
 }));
 const resourceDetectorMock = vi.hoisted(() => ({
   detectAll: vi.fn(async () => mockIdleResources),
+  getInventory: vi.fn(() => mockIdleResources.map((item) => item.resource)),
   detectIdleVMs: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectIdleAppServices: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectIdleStorage: vi.fn(async () => mockIdleResources.slice(1)),
@@ -92,6 +93,7 @@ describe('CLI command classes', () => {
     azureClientMock.listAccessibleSubscriptions.mockClear();
     costAnalyzerMock.queryCosts.mockClear();
     resourceDetectorMock.detectAll.mockClear();
+    resourceDetectorMock.getInventory.mockClear();
     resourceDetectorMock.detectIdleVMs.mockClear();
     resourceDetectorMock.detectIdleAppServices.mockClear();
     resourceDetectorMock.detectIdleStorage.mockClear();

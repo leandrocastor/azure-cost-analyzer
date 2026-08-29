@@ -153,4 +153,81 @@ describe('generateStaticReport — seções de diferenciação', () => {
     // Compiling the source surfaces syntax errors without executing any of it.
     expect(() => new Script(REPORT_CLIENT_SCRIPT)).not.toThrow();
   });
+  it('renders the Well-Architected scorecard and the cost of inaction', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      waf: {
+        score: 72,
+        grade: 'C',
+        summary: 'Governança de custos parcialmente madura.',
+        checks: [
+          {
+            id: 'CO:05',
+            title: 'Proporção de desperdício',
+            status: 'partial',
+            weight: 20,
+            score: 12,
+            detail: '8% do gasto está em recursos ociosos.',
+            recommendation: 'Elimine os recursos ociosos identificados.',
+          },
+        ],
+      },
+      inaction: {
+        comparedTo: '2026-01-01T00:00:00.000Z',
+        daysBetween: 90,
+        stale: [
+          {
+            resourceId: '/subscriptions/sub/disks/disk-a',
+            resourceName: 'disk-a',
+            title: 'Disco não está anexado a nenhuma VM',
+            monthlySavings: 30,
+            firstSeenAt: '2026-01-01T00:00:00.000Z',
+            daysOpen: 90,
+            wastedSoFar: 90,
+          },
+        ],
+        resolved: 2,
+        totalWasted: 90,
+        projectedAnnualWaste: 360,
+        summary: '1 recomendação continua em aberto há 90 dias.',
+      },
+    });
+
+    expect(html).toContain('"grade":"C"');
+    expect(html).toContain('"wastedSoFar":90');
+    expect(html).toContain('Well-Architected');
+  });
+
+  it('keeps the scorecard and the inaction sections hidden without a baseline', () => {
+    const html = generateStaticReport(fullData);
+
+    // The sections start hidden and are only revealed client-side when data exists.
+    expect(html).toContain('"waf":null');
+    expect(html).toContain('"inaction":null');
+    expect(html).toContain('id="waf-section" hidden');
+    expect(html).toContain('id="inaction-section" hidden');
+  });
+
+  it('exposes the evidence that supports each idle finding', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      idleResources: [
+        {
+          ...mockIdleResources[0]!,
+          evidence: {
+            observationWindowDays: 30,
+            dataPoints: 720,
+            metrics: [{ label: 'CPU média', value: 1.2, unit: '%' }],
+            savingsBasis: 'retail-price',
+            savingsBasisDetail: 'Preço de lista Azure para P10 LRS Disk.',
+            confidence: 'high',
+          },
+        },
+      ],
+    });
+
+    expect(html).toContain('"savingsBasis":"retail-price"');
+    expect(html).toContain('"confidence":"high"');
+    expect(html).toContain('"observationWindowDays":30');
+  });
 });

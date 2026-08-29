@@ -3,9 +3,11 @@ import type {
   CostSummary,
   ExecutiveSummary,
   IdleResource,
+  InactionCost,
   OwnershipReport,
   Recommendation,
   RemediationPlan,
+  WafScorecard,
 } from '@/models';
 
 export type StaticReportData = {
@@ -19,6 +21,8 @@ export type StaticReportData = {
   ownership?: OwnershipReport;
   diff?: CostDiff | undefined;
   remediationPlans?: RemediationPlan[];
+  waf?: WafScorecard | undefined;
+  inaction?: InactionCost | undefined;
 };
 
 /**
@@ -100,7 +104,7 @@ export const REPORT_CLIENT_SCRIPT = `
           return;
         }
 
-        const thead = '<thead><tr><th>Nome</th><th>Tipo</th><th>Resource Group</th><th>Location</th><th>Score de ociosidade</th><th>Economia mensal</th><th>Motivo</th></tr></thead>';
+        const thead = '<thead><tr><th>Nome</th><th>Tipo</th><th>Resource Group</th><th>Location</th><th>Score de ociosidade</th><th>Economia mensal</th><th>Motivo e evidência</th></tr></thead>';
         const tbody = rows.map(r => {
           const res = r.resource || {};
           const type = (res.type || '').split('/').pop() || '—';
@@ -112,7 +116,7 @@ export const REPORT_CLIENT_SCRIPT = `
             + '<td>' + esc(res.location || '—') + '</td>'
             + '<td><div class="score-bar"><div class="score-bar-inner" style="width:' + Math.max(0, Math.min(80, Number(score) || 0)) + 'px"></div><span>' + esc(score) + '</span></div></td>'
             + '<td style="color:var(--green)">' + fmtFull(r.estimatedMonthlySavings) + '</td>'
-            + '<td style="color:var(--muted);font-size:0.8rem">' + esc(r.reason || '—') + '</td>'
+            + '<td style="color:var(--muted);font-size:0.8rem">' + esc(r.reason || '—') + renderEvidence(r.evidence) + '</td>'
             + '</tr>';
         }).join('');
         container.innerHTML = '<table>' + thead + '<tbody>' + tbody + '</tbody></table>';
@@ -131,6 +135,7 @@ export const REPORT_CLIENT_SCRIPT = `
             + '<div>'
             + '<div class="rec-title">' + esc(r.title || '—') + '</div>'
             + '<div class="rec-desc">' + esc(r.description || '') + '</div>'
+            + renderEvidence(r.evidence)
             + '<div class="rec-meta">'
             + '<span class="badge ' + esc(risk) + '">Risco: ' + esc(LEVEL_LABELS[risk] || risk) + '</span>'
             + '<span class="badge ' + esc(effort) + '">Esforço: ' + esc(LEVEL_LABELS[effort] || effort) + '</span>'
@@ -165,6 +170,106 @@ export const REPORT_CLIENT_SCRIPT = `
             + '</div>';
         }).join('');
         container.innerHTML = bars;
+      }
+
+      const WAF_STATUS = {
+        pass: { label: 'Conforme', cls: 'waf-pass' },
+        partial: { label: 'Parcial', cls: 'waf-partial' },
+        fail: { label: 'Não atendido', cls: 'waf-fail' },
+        'not-applicable': { label: 'Não aplicável', cls: 'waf-na' },
+      };
+
+      const BASIS_LABELS = {
+        'retail-price': 'Preço de lista Azure',
+        'observed-cost': 'Custo observado',
+        heuristic: 'Estimativa aproximada',
+      };
+
+      const CONFIDENCE_LABELS = { high: 'alta', medium: 'média', low: 'baixa' };
+
+      function renderWaf() {
+        const waf = REPORT.waf;
+        if (!waf) return;
+        document.getElementById('waf-section').hidden = false;
+
+        const rows = (waf.checks || []).map(function (check) {
+          const status = WAF_STATUS[check.status] || WAF_STATUS.fail;
+          return '<tr>'
+            + '<td><code>' + esc(check.code) + '</code></td>'
+            + '<td><strong>' + esc(check.title) + '</strong><div class="muted">' + esc(check.evidence) + '</div></td>'
+            + '<td><span class="badge ' + status.cls + '">' + esc(status.label) + '</span></td>'
+            + '<td>' + esc(LEVEL_LABELS[check.impact] || check.impact) + '</td>'
+            + '<td>' + esc(check.recommendation) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('waf-body').innerHTML =
+          '<div class="waf-header">'
+          + '<div class="waf-score waf-grade-' + esc(waf.grade) + '">'
+          + '<span class="waf-grade">' + esc(waf.grade) + '</span>'
+          + '<span class="waf-number">' + Number(waf.score).toFixed(0) + '<small>/100</small></span>'
+          + '</div>'
+          + '<p class="waf-summary">' + esc(waf.summary) + '</p>'
+          + '</div>'
+          + '<table><thead><tr><th>Código</th><th>Controle</th><th>Situação</th><th>Impacto</th><th>Recomendação</th></tr></thead>'
+          + '<tbody>' + rows + '</tbody></table>';
+      }
+
+      function renderInaction() {
+        const data = REPORT.inaction;
+        if (!data) return;
+        document.getElementById('inaction-section').hidden = false;
+
+        const rows = (data.stale || []).map(function (item) {
+          return '<tr>'
+            + '<td><strong>' + esc(item.resourceName) + '</strong><div class="muted">' + esc(item.title) + '</div></td>'
+            + '<td>' + item.daysOpen + ' dias</td>'
+            + '<td>' + fmtFull(item.monthlySavings) + '</td>'
+            + '<td class="delta-up">' + fmtFull(item.wastedSoFar) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        const table = rows
+          ? '<table><thead><tr><th>Recurso</th><th>Em aberto</th><th>Desperdício mensal</th><th>Já desperdiçado</th></tr></thead><tbody>' + rows + '</tbody></table>'
+          : '<div class="empty">Nenhuma recomendação ficou pendente desde a análise anterior.</div>';
+
+        document.getElementById('inaction-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.totalWasted) + '</span><small>já desperdiçado</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.projectedAnnualWaste) + '</span><small>projeção em 12 meses</small></div>'
+          + '<div class="inaction-kpi"><span>' + (data.stale || []).length + '</span><small>ainda em aberto</small></div>'
+          + '<div class="inaction-kpi"><span>' + data.resolved + '</span><small>resolvidas</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + table;
+      }
+
+      /**
+       * Renders the audit trail of a finding. Showing the measurements and the price
+       * basis is what lets a reader challenge or accept the number.
+       */
+      function renderEvidence(evidence) {
+        if (!evidence) return '';
+
+        const metrics = (evidence.metrics || []).map(function (metric) {
+          const threshold = metric.threshold == null
+            ? ''
+            : ' (limite: ' + esc(metric.comparison === 'below' ? '<' : metric.comparison === 'above' ? '>' : '=') + ' ' + metric.threshold + ' ' + esc(metric.unit) + ')';
+          return '<li><strong>' + esc(metric.label) + ':</strong> ' + esc(metric.value) + ' ' + esc(metric.unit) + threshold + '</li>';
+        }).join('');
+
+        const conf = CONFIDENCE_LABELS[evidence.confidence] || evidence.confidence;
+        const basis = BASIS_LABELS[evidence.savingsBasis] || evidence.savingsBasis;
+
+        return '<details class="evidence">'
+          + '<summary>Evidência · confiança ' + esc(conf) + '</summary>'
+          + (metrics ? '<ul>' + metrics + '</ul>' : '')
+          + '<p class="muted"><strong>Base do cálculo:</strong> ' + esc(basis) + '. ' + esc(evidence.savingsBasisDetail) + '</p>'
+          + (evidence.observationWindowDays > 0
+              ? '<p class="muted">Janela observada: ' + evidence.observationWindowDays + ' dias · ' + evidence.dataPoints + ' pontos de telemetria.</p>'
+              : '')
+          + (evidence.caveat ? '<p class="caveat">' + esc(evidence.caveat) + '</p>' : '')
+          + '</details>';
       }
 
       function renderExecutiveSummary() {
@@ -370,6 +475,8 @@ export const REPORT_CLIENT_SCRIPT = `
       renderKPI('kpi-savings', fmt(REPORT.summary.annualSavingsOpportunity));
 
       renderExecutiveSummary();
+      renderWaf();
+      renderInaction();
       renderDiff();
       renderOwnership();
       renderIdleTable();
@@ -411,6 +518,8 @@ export const generateStaticReport = (data: StaticReportData): string => {
     executiveSummary: data.executiveSummary ?? null,
     ownership: data.ownership ?? null,
     diff: data.diff ?? null,
+    waf: data.waf ?? null,
+    inaction: data.inaction ?? null,
     remediationPlans: data.remediationPlans ?? [],
   });
 
@@ -503,6 +612,39 @@ export const generateStaticReport = (data: StaticReportData): string => {
       .exec-summary .exec-tag { display: inline-block; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.15rem 0.6rem; margin-bottom: 0.85rem; }
       .exec-headline { font-size: 1.15rem; font-weight: 600; line-height: 1.5; margin-bottom: 1rem; }
       .exec-highlights { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1.1rem; }
+      /* Well-Architected scorecard */
+      .waf-header { display: flex; align-items: center; gap: 1.2rem; margin-bottom: 1rem; flex-wrap: wrap; }
+      .waf-score { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.7rem 1.1rem; border-radius: 12px; border: 1px solid var(--border); background: var(--surface2); }
+      .waf-grade { font-size: 2.1rem; font-weight: 700; line-height: 1; }
+      .waf-number { font-size: 1.1rem; color: var(--muted); }
+      .waf-number small { font-size: 0.75rem; }
+      .waf-grade-A .waf-grade { color: var(--green); }
+      .waf-grade-B .waf-grade { color: var(--green); }
+      .waf-grade-C .waf-grade { color: #d29922; }
+      .waf-grade-D .waf-grade { color: #f0883e; }
+      .waf-grade-E .waf-grade { color: var(--red); }
+      .waf-summary { margin: 0; flex: 1; min-width: 260px; color: var(--muted); }
+      .badge.waf-pass { background: rgba(63,185,80,0.15); color: var(--green); }
+      .badge.waf-partial { background: rgba(210,153,34,0.15); color: #d29922; }
+      .badge.waf-fail { background: rgba(248,81,73,0.15); color: var(--red); }
+      .badge.waf-na { background: var(--surface2); color: var(--muted); }
+
+      /* Cost of inaction */
+      .inaction-kpis { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-bottom: 0.9rem; }
+      .inaction-kpi { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.9rem; min-width: 130px; }
+      .inaction-kpi span { display: block; font-size: 1.15rem; font-weight: 600; }
+      .inaction-kpi small { color: var(--muted); font-size: 0.72rem; }
+
+      /* Evidence disclosure */
+      .evidence { margin-top: 0.5rem; font-size: 0.78rem; }
+      .evidence summary { cursor: pointer; color: var(--muted); user-select: none; }
+      .evidence summary:hover { color: var(--fg); }
+      .evidence ul { margin: 0.5rem 0; padding-left: 1.1rem; }
+      .evidence li { margin-bottom: 0.2rem; }
+      .evidence p { margin: 0.3rem 0; }
+      .evidence .caveat { color: #d29922; }
+      .muted { color: var(--muted); font-size: 0.78rem; }
+
       .exec-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.8rem; }
       .exec-chip .chip-label { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
       .exec-chip .chip-value { font-size: 1rem; font-weight: 600; }
@@ -593,6 +735,22 @@ export const generateStaticReport = (data: StaticReportData): string => {
             </select>
           </div>
           <div id="idle-table-container"></div>
+        </div>
+      </section>
+
+      <section id="waf-section" hidden>
+        <h2>Well-Architected · Cost Optimization</h2>
+        <div class="card">
+          <p class="section-hint">Avaliação automática do pilar Cost Optimization do Azure Well-Architected Framework. Cada controle é respondido com evidência coletada do próprio tenant, e não por questionário manual.</p>
+          <div id="waf-body"></div>
+        </div>
+      </section>
+
+      <section id="inaction-section" hidden>
+        <h2>Custo da Inação</h2>
+        <div class="card">
+          <p class="section-hint">Recomendações que já constavam no relatório anterior e continuam em aberto, com o valor que já deixou de ser economizado desde a primeira detecção.</p>
+          <div id="inaction-body"></div>
         </div>
       </section>
 
