@@ -26,6 +26,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "npm run build && vitest run tests/e2e/cli-binary.test.ts",
     "prepack": "npm run build",
+    "prepare": "npm run build",
     "start": "node dist/cli/index.js"
   },
   "dependencies": {
