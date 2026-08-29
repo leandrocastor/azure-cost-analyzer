@@ -1,5 +1,5 @@
 import { AzureApiError, RateLimitError } from '@/utils/errors';
-import { isRetryableError, retry } from '@/utils/retry';
+import { getRetryAfterMs, isRetryableError, retry } from '@/utils/retry';
 
 describe('retry', () => {
   it('returns on first success', async () => {
@@ -110,5 +110,77 @@ describe('retry', () => {
       { onRetry, sleep: async () => undefined },
     );
     expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it('honors the Retry-After response header returned by Azure throttling', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    await retry(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error('Too many requests. Please retry.'), {
+            statusCode: 429,
+            response: { headers: { get: (name: string) => (name === 'retry-after' ? '30' : undefined) } },
+          });
+        }
+        return 'ok';
+      },
+      { sleep: async (ms) => delays.push(ms) },
+    );
+    expect(delays).toEqual([30_000]);
+  });
+
+  it('honors millisecond retry hints from x-ms-retry-after-ms', () => {
+    const error = Object.assign(new Error('throttled'), {
+      statusCode: 429,
+      response: { headers: { get: (name: string) => (name === 'x-ms-retry-after-ms' ? '4500' : undefined) } },
+    });
+    expect(getRetryAfterMs(error)).toBe(4_500);
+  });
+
+  it('honors Cost Management specific retry headers', () => {
+    const error = Object.assign(new Error('throttled'), {
+      statusCode: 429,
+      headers: { 'x-ms-ratelimit-microsoft.costmanagement-entity-retry-after': '60' },
+    });
+    expect(getRetryAfterMs(error)).toBe(60_000);
+  });
+
+  it('returns undefined when no retry hint is present', () => {
+    expect(getRetryAfterMs(new AzureApiError('boom', 500))).toBeUndefined();
+    expect(getRetryAfterMs('not an object')).toBeUndefined();
+  });
+
+  it('caps server-provided retry delays at maxDelayMs', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    await retry(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new RateLimitError('slow down', 429, 500_000);
+        }
+        return 'ok';
+      },
+      { sleep: async (ms) => delays.push(ms), maxDelayMs: 90_000 },
+    );
+    expect(delays).toEqual([90_000]);
+  });
+
+  it('retries throttled operations more than three times by default', async () => {
+    let attempts = 0;
+    const result = await retry(
+      async () => {
+        attempts += 1;
+        if (attempts < 6) {
+          throw new RateLimitError('throttled', 429);
+        }
+        return 'ok';
+      },
+      { sleep: async () => undefined },
+    );
+    expect(result).toBe('ok');
+    expect(attempts).toBe(6);
   });
 });

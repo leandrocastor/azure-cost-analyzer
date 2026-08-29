@@ -100,6 +100,17 @@ describe('CLI command classes', () => {
     resourceDetectorMock.detectUnusedLoadBalancers.mockClear();
     optimizerMock.generateRecommendations.mockClear();
     startDashboardServerMock.mockClear();
+
+    // Some tests replace these implementations to simulate Azure throttling; restore
+    // the defaults so they do not leak into subsequent tests.
+    azureClientMock.getConfiguredSubscriptionId.mockReturnValue(validEnv.AZURE_SUBSCRIPTION_ID);
+    azureClientMock.listAccessibleSubscriptions.mockResolvedValue([
+      { id: 'sub-a', displayName: 'Subscription A' },
+      { id: 'sub-b', displayName: 'Subscription B' },
+    ]);
+    costAnalyzerMock.queryCosts.mockResolvedValue(mockCostSummary);
+    resourceDetectorMock.detectAll.mockResolvedValue(mockIdleResources);
+    optimizerMock.generateRecommendations.mockResolvedValue(mockRecommendations);
     if (existsSync(outputPath)) {
       unlinkSync(outputPath);
     }
@@ -235,7 +246,8 @@ describe('CLI command classes', () => {
   });
 
   it('reports export failures through spinner', async () => {
-    costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('export failed'));
+    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+    azureClientMock.listAccessibleSubscriptions.mockRejectedValueOnce(new Error('export failed'));
     await expect(ExportCommand.run(['--output', reportOutputPath])).rejects.toThrow('export failed');
     expect(spinner.fail).toHaveBeenCalledWith('export failed');
   });
@@ -250,5 +262,30 @@ describe('CLI command classes', () => {
 
     const html = readFileSync(reportOutputPath, 'utf8');
     expect(html).toContain('2 subscriptions: Subscription A, Subscription B');
+  });
+
+  it('still generates a report when one subscription is throttled', async () => {
+    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+    costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('Too many requests. Please retry.'));
+    const warnSpy = vi.spyOn(ExportCommand.prototype, 'warn').mockImplementation(((message: string) => message) as never);
+
+    await ExportCommand.run(['--output', reportOutputPath]);
+
+    expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining('2 subscriptions analyzed'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Costs unavailable for "Subscription A"'));
+
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('Too many requests. Please retry.');
+    warnSpy.mockRestore();
+  });
+
+  it('fails only when no subscription yields any data', async () => {
+    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+    costAnalyzerMock.queryCosts.mockRejectedValue(new Error('Too many requests. Please retry.'));
+    resourceDetectorMock.detectAll.mockRejectedValue(new Error('Too many requests. Please retry.'));
+
+    await expect(ExportCommand.run(['--output', reportOutputPath])).rejects.toThrow(
+      'No data could be collected from any subscription',
+    );
   });
 });
