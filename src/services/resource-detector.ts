@@ -239,6 +239,28 @@ export class ResourceDetectorService {
     return results.flat().sort((left, right) => right.estimatedMonthlySavings - left.estimatedMonthlySavings);
   }
 
+  /**
+   * Maps the shorthand aggregation identifiers used across this service to the
+   * capitalized aggregation type names required by the Azure Monitor Metrics API.
+   */
+  private normalizeAggregation(aggregation: string): string {
+    const aggregationMap: Record<string, string> = {
+      avg: 'Average',
+      average: 'Average',
+      sum: 'Total',
+      total: 'Total',
+      min: 'Minimum',
+      minimum: 'Minimum',
+      max: 'Maximum',
+      maximum: 'Maximum',
+      count: 'Count',
+      last: 'Last',
+      none: 'None',
+    };
+
+    return aggregationMap[aggregation.toLowerCase()] ?? aggregation;
+  }
+
   private async wrapDetection<T>(operation: () => Promise<T>, message: string): Promise<T> {
     try {
       return await operation();
@@ -249,12 +271,15 @@ export class ResourceDetectorService {
   }
 
   private async getMetrics(resourceId: string, metricName: string, interval: string, aggregation: string): Promise<ResourceMetric[]> {
+    // The Azure Monitor Metrics API only accepts capitalized aggregation type names
+    // (e.g. "Average", "Total"), not the lowercase shorthand used internally here.
+    const normalizedAggregation = this.normalizeAggregation(aggregation);
     const result = await this.azureClient.executeWithRetry(() =>
       this.monitorClient.metrics.list(resourceId, {
         timespan: this.buildTimespan(aggregation === 'sum' ? 30 : 7),
         interval,
         metricnames: metricName,
-        aggregation,
+        aggregation: normalizedAggregation,
       }),
     );
 
