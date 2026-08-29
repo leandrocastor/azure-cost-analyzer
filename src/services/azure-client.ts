@@ -112,12 +112,13 @@ export class AzureClientService {
   /**
    * Executes an Azure SDK operation with retry semantics.
    */
-  public async executeWithRetry<T>(operation: () => Promise<T>): Promise<T> {
+  public async executeWithRetry<T>(operation: () => Promise<T>, overrides: RetryConfig = {}): Promise<T> {
+    const config = { ...this.retryConfig, ...overrides };
     return retry(operation, {
-      ...this.retryConfig,
+      ...config,
       onRetry: (attempt, error, delayMs) => {
         this.logger.warn('Retrying Azure operation', { attempt, delayMs, error: error instanceof Error ? error.message : 'unknown' });
-        this.retryConfig.onRetry?.(attempt, error, delayMs);
+        config.onRetry?.(attempt, error, delayMs);
       },
     });
   }

@@ -47,6 +47,20 @@ O `npx` baixa o repositório, executa o build automaticamente (via script `prepa
 
 **Não é necessário configurar `AZURE_SUBSCRIPTION_ID` nem `.env`:** se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório.
 
+#### Cota de consultas do Cost Management (QPU)
+
+A API de Cost Management do Azure cobra cada consulta em **QPU (Query Processing Units)**: aproximadamente **1 QPU por mês de dados solicitado**. Os limites são **por tenant**:
+
+| Janela | Limite |
+| --- | --- |
+| 10 segundos | 12 QPU |
+| 1 minuto | 60 QPU |
+| 1 hora | 600 QPU |
+
+Ou seja, 4 assinaturas com `--period 3` consomem 12 QPU e estouram a janela de 10 segundos. O comando **respeita essa cota automaticamente**, pausando entre as consultas e aguardando o tempo indicado pelo próprio Azure quando recebe um HTTP 429 — por isso execuções com muitas assinaturas podem levar alguns minutos. O spinner informa quando a espera é por cota.
+
+Se preferir acelerar, reduza o `--period` ou limite as assinaturas com `--subscription`.
+
 Qualquer outro comando (`costs`, `detect`, `recommend`, `dashboard`) também pode ser executado da mesma forma, bastando trocar `export` pelo comando desejado — porém esses comandos exigem uma única assinatura (via `--subscription` ou `AZURE_SUBSCRIPTION_ID`).
 
 ## Configuração

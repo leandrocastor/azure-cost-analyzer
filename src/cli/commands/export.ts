@@ -14,6 +14,7 @@ import { OptimizerService } from '@/services/optimizer';
 import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
 import { ResourceDetectorService } from '@/services/resource-detector';
+import { costManagementQpuLimiter } from '@/utils/qpu-limiter';
 
 /**
  * Builds a default, timestamped output filename for the generated report.
@@ -133,6 +134,16 @@ export default class ExportCommand extends Command {
       const idleResources: IdleResource[] = [];
       const warnings: string[] = [];
       const analyzedSubscriptions: AccessibleSubscription[] = [];
+
+      // Cost Management enforces its quota per tenant, so a wait triggered by one
+      // subscription is surfaced as progress instead of looking like a freeze.
+      costManagementQpuLimiter.setWaitReporter((delayMs, reason) => {
+        const seconds = Math.ceil(delayMs / 1000);
+        spinner.text =
+          reason === 'throttled'
+            ? `Limite do Cost Management atingido, aguardando ${seconds}s antes de continuar...`
+            : `Respeitando a cota de consultas do Cost Management, aguardando ${seconds}s...`;
+      });
 
       for (const [index, subscription] of subscriptions.entries()) {
         const progress = `subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;

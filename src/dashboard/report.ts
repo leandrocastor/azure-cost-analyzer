@@ -377,7 +377,12 @@ export const REPORT_CLIENT_SCRIPT = `
       renderRemediation();
       renderBarChart('chart-service', REPORT.costs.byService);
       renderBarChart('chart-rg', REPORT.costs.byResourceGroup);
-      renderBarChart('chart-loc', REPORT.costs.byLocation);
+      // Location is only grouped when explicitly requested, so the card stays hidden
+      // rather than showing an empty chart.
+      if (Object.keys(REPORT.costs.byLocation || {}).length > 0) {
+        document.getElementById('card-loc').hidden = false;
+        renderBarChart('chart-loc', REPORT.costs.byLocation);
+      }
 `;
 
 /**
@@ -631,7 +636,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
             <h3>Por Resource Group</h3>
             <div id="chart-rg" class="bar-chart"></div>
           </div>
-          <div class="chart-card">
+          <div class="chart-card" id="card-loc" hidden>
             <h3>Por Location</h3>
             <div id="chart-loc" class="bar-chart"></div>
           </div>
