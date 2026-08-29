@@ -2,10 +2,15 @@ import { z } from 'zod';
 
 const tagsSchema = z.record(z.string(), z.string()).default({});
 const nonNegativeNumber = z.number().finite().min(0);
+// Aggregated cost buckets can end up negative when credits or refunds outweigh the
+// charges in the period, so totals must not be constrained to non-negative values.
+const costAmount = z.number().finite();
 
 export const CostEntrySchema = z.object({
   date: z.string().min(1),
-  amount: nonNegativeNumber,
+  // Azure reports credits and refunds as negative charges; discarding them would
+  // overstate the total, so the entry level accepts any finite amount.
+  amount: z.number().finite(),
   currency: z.string().min(1),
   service: z.string().min(1),
   resourceGroup: z.string().min(1),
@@ -15,23 +20,23 @@ export const CostEntrySchema = z.object({
 
 export const CostSummarySchema = z.object({
   period: z.string().min(1),
-  totalAmount: nonNegativeNumber,
+  totalAmount: costAmount,
   currency: z.string().min(1),
-  byService: z.record(z.string(), nonNegativeNumber),
-  byResourceGroup: z.record(z.string(), nonNegativeNumber),
-  byLocation: z.record(z.string(), nonNegativeNumber),
+  byService: z.record(z.string(), costAmount),
+  byResourceGroup: z.record(z.string(), costAmount),
+  byLocation: z.record(z.string(), costAmount),
 });
 
 export const CostTrendSchema = z.object({
   period: z.string().min(1),
-  amount: nonNegativeNumber,
+  amount: costAmount,
   percentChange: z.number().finite(),
 });
 
 export const CostAnomalySchema = z.object({
   date: z.string().min(1),
-  amount: nonNegativeNumber,
-  expectedAmount: nonNegativeNumber,
+  amount: costAmount,
+  expectedAmount: costAmount,
   deviation: z.number().finite(),
   severity: z.enum(['low', 'medium', 'high']),
 });
