@@ -39,7 +39,11 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "$HOME/clouddrive/azure-cost-report.html"
 ```
 
-`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity. Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command.
+`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity.
+
+**No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
+
+Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command — but those commands require a single subscription (via `--subscription` or `AZURE_SUBSCRIPTION_ID`).
 
 ## Configuration
 
@@ -47,7 +51,7 @@ Copy `.env.example` to `.env` and update the values.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | Yes | - | Azure subscription to analyze |
+| `AZURE_SUBSCRIPTION_ID` | No | - | Azure subscription to analyze. If omitted, the `export` command discovers and analyzes every accessible subscription; other commands require `--subscription` |
 | `AZURE_TENANT_ID` | Service principal only | - | Microsoft Entra tenant |
 | `AZURE_CLIENT_ID` | Service principal or optional managed identity | - | Client/application id |
 | `AZURE_CLIENT_SECRET` | Service principal only | - | Client secret |
@@ -114,6 +118,8 @@ cost-analyzer export --period 3 --output ./azure-cost-report.html
 ```
 
 The generated file already has the data embedded (costs, idle resources, and recommendations) and can be opened directly in a browser or hosted on any static site (Azure Storage Static Website, App Service, etc.).
+
+Without `--subscription`, every enabled subscription visible to the authenticated identity is analyzed and consolidated into the report. To scope it to a single subscription, use `--subscription <id>`.
 
 ## Dashboard screenshot
 

@@ -39,7 +39,11 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "$HOME/clouddrive/azure-cost-report.html"
 ```
 
-O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão. Qualquer outro comando (`costs`, `detect`, `recommend`, `dashboard`) também pode ser executado da mesma forma, bastando trocar `export` pelo comando desejado.
+O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
+
+**Não é necessário configurar `AZURE_SUBSCRIPTION_ID` nem `.env`:** se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório.
+
+Qualquer outro comando (`costs`, `detect`, `recommend`, `dashboard`) também pode ser executado da mesma forma, bastando trocar `export` pelo comando desejado — porém esses comandos exigem uma única assinatura (via `--subscription` ou `AZURE_SUBSCRIPTION_ID`).
 
 ## Configuração
 
@@ -47,7 +51,7 @@ Copie `.env.example` para `.env` e atualize os valores.
 
 | Variável | Obrigatório | Padrão | Descrição |
 | --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | Sim | - | Subscription do Azure a ser analisada |
+| `AZURE_SUBSCRIPTION_ID` | Não | - | Subscription do Azure a ser analisada. Se omitida, o comando `export` descobre e analisa todas as assinaturas acessíveis; os demais comandos exigem `--subscription` |
 | `AZURE_TENANT_ID` | Somente service principal | - | Tenant do Microsoft Entra |
 | `AZURE_CLIENT_ID` | Service principal ou managed identity opcional | - | Id do client/application |
 | `AZURE_CLIENT_SECRET` | Somente service principal | - | Client secret |
@@ -114,6 +118,8 @@ cost-analyzer export --period 3 --output ./azure-cost-report.html
 ```
 
 O arquivo gerado já contém os dados incorporados (custos, recursos ociosos e recomendações) e pode ser aberto diretamente no navegador ou hospedado em qualquer site estático (Azure Storage Static Website, App Service, etc.).
+
+Sem `--subscription`, todas as assinaturas habilitadas visíveis à identidade autenticada são analisadas e consolidadas no relatório. Para restringir a uma única assinatura, use `--subscription <id>`.
 
 ## Screenshot do dashboard
 

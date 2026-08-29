@@ -18,6 +18,11 @@ const spawnMock = vi.hoisted(() => vi.fn(() => {
 
 const azureClientMock = vi.hoisted(() => ({
   getSubscriptionId: vi.fn((value?: string) => value ?? validEnv.AZURE_SUBSCRIPTION_ID),
+  getConfiguredSubscriptionId: vi.fn(() => validEnv.AZURE_SUBSCRIPTION_ID),
+  listAccessibleSubscriptions: vi.fn(async () => [
+    { id: 'sub-a', displayName: 'Subscription A' },
+    { id: 'sub-b', displayName: 'Subscription B' },
+  ]),
 }));
 const costAnalyzerMock = vi.hoisted(() => ({
   queryCosts: vi.fn(async () => mockCostSummary),
@@ -82,6 +87,8 @@ describe('CLI command classes', () => {
     spinner.fail.mockClear();
     spawnMock.mockClear();
     azureClientMock.getSubscriptionId.mockClear();
+    azureClientMock.getConfiguredSubscriptionId.mockClear();
+    azureClientMock.listAccessibleSubscriptions.mockClear();
     costAnalyzerMock.queryCosts.mockClear();
     resourceDetectorMock.detectAll.mockClear();
     resourceDetectorMock.detectIdleVMs.mockClear();
@@ -231,5 +238,17 @@ describe('CLI command classes', () => {
     costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('export failed'));
     await expect(ExportCommand.run(['--output', reportOutputPath])).rejects.toThrow('export failed');
     expect(spinner.fail).toHaveBeenCalledWith('export failed');
+  });
+
+  it('analyzes every accessible subscription when none is configured or passed', async () => {
+    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+    await ExportCommand.run(['--output', reportOutputPath]);
+    expect(azureClientMock.listAccessibleSubscriptions).toHaveBeenCalledOnce();
+    expect(costAnalyzerMock.queryCosts).toHaveBeenCalledWith('sub-a', expect.any(String), expect.any(String), 'service');
+    expect(costAnalyzerMock.queryCosts).toHaveBeenCalledWith('sub-b', expect.any(String), expect.any(String), 'service');
+    expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining('2 subscriptions analyzed'));
+
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('2 subscriptions: Subscription A, Subscription B');
   });
 });
