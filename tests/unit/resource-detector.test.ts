@@ -580,6 +580,50 @@ describe('ResourceDetectorService', () => {
       expect(items).toHaveLength(0);
     });
 
+    it.each([
+      ['string form returned by the Site model', 'Free'],
+      ['SKU name code', 'F1'],
+      ['shared tier code', 'D1'],
+      ['consumption tier code', 'Y1'],
+      ['flex consumption code', 'FC1'],
+      ['string with different casing', 'free'],
+    ])('does not offer savings for an App Service billed at zero (%s)', async (_label, sku) => {
+      webAppsListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-free',
+            name: 'app-free',
+            location: 'eastus',
+            // The Site model exposes sku as a plain string, not as an object.
+            sku,
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Requests', 0, 'total'));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServices();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('still reports a paid App Service tier', async () => {
+      webAppsListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-paid',
+            name: 'app-paid',
+            location: 'eastus',
+            sku: 'Standard',
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Requests', 0, 'total'));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServices();
+
+      expect(items).toHaveLength(1);
+    });
+
     it('measures a vCore database by CPU when it reports no DTU', async () => {
       sqlServersListMock.mockReturnValue(
         iterable([{ id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a', name: 'sql-a', location: 'eastus' }]),

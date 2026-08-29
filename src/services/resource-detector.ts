@@ -23,7 +23,10 @@ type ResourceLike = {
   name?: string;
   type?: string;
   location?: string;
-  sku?: { name?: string; tier?: string };
+  // The Site model returns `sku` as a plain string ("Free"), while most other
+  // resources return an object. Both shapes must be representable or the string form
+  // silently narrows to never and its values are never inspected.
+  sku?: { name?: string; tier?: string } | string;
   tags?: Record<string, string>;
   properties?: Record<string, unknown>;
   [key: string]: unknown;
@@ -61,6 +64,42 @@ const IN_USE_DISK_STATES = new Set(['attached', 'reserved', 'frozen', 'activesas
 
 /** App Service tiers that carry no compute charge, so there is nothing to save. */
 const FREE_APP_SERVICE_TIERS = new Set(['free', 'shared', 'dynamic', 'flexconsumption']);
+
+/**
+ * SKU name codes for the same tiers. A site returns "F1" or "Free" depending on which
+ * field is populated, and matching only one of the two forms lets free sites through.
+ */
+const FREE_APP_SERVICE_SKU_NAMES = new Set(['f1', 'd1', 'y1', 'fc1']);
+
+/**
+ * Decides whether an App Service runs on a tier that carries no compute charge.
+ *
+ * The Site model exposes `sku` as a plain string such as "Free", while the App Service
+ * Plan exposes an object with `name` ("F1") and `tier` ("Free"). Reading `.tier` off the
+ * string form yields undefined, which is what let F1 sites be reported as idle with a
+ * savings figure attached even though they are never billed.
+ */
+const isFreeAppServiceSku = (app: ResourceLike): boolean => {
+  const sku = app.sku;
+  const candidates = [
+    readSkuName(app),
+    typeof sku === 'string' ? undefined : sku?.tier,
+    readProperty<string>(app, 'sku'),
+  ];
+
+  return candidates.some((candidate) => {
+    if (typeof candidate !== 'string') {
+      return false;
+    }
+
+    const normalized = candidate.trim().toLowerCase().replace(/\s+/g, '');
+    return FREE_APP_SERVICE_TIERS.has(normalized) || FREE_APP_SERVICE_SKU_NAMES.has(normalized);
+  });
+};
+
+/** Reads the SKU name regardless of whether the payload uses the string or object form. */
+const readSkuName = (resource: ResourceLike): string | undefined =>
+  typeof resource.sku === 'string' ? resource.sku : resource.sku?.name;
 
 type ComputeClientLike = {
   virtualMachines: { listAll: (options?: Record<string, unknown>) => AsyncIterable<ResourceLike> | Iterable<ResourceLike> };
@@ -212,8 +251,7 @@ export class ResourceDetectorService {
 
         // Free, Shared and Consumption plans carry no fixed compute charge, so
         // there is no monthly saving to claim by shutting the site down.
-        const tier = String(app.sku?.tier ?? app.sku?.name ?? '').toLowerCase();
-        if (FREE_APP_SERVICE_TIERS.has(tier)) {
+        if (isFreeAppServiceSku(app)) {
           continue;
         }
 
@@ -575,7 +613,7 @@ export class ResourceDetectorService {
     }
 
     const allocation = String(readProperty<string>(ip, 'publicIPAllocationMethod') ?? '').toLowerCase();
-    const tier = String(ip.sku?.name ?? '').toLowerCase();
+    const tier = String(readSkuName(ip) ?? '').toLowerCase();
 
     return !(tier === 'basic' && allocation === 'dynamic');
   }
@@ -588,7 +626,7 @@ export class ResourceDetectorService {
    * is just as idle as one with no pool at all, so membership is what is measured.
    */
   private isUnusedLoadBalancer(lb: ResourceLike): boolean {
-    const tier = String(lb.sku?.name ?? '').toLowerCase();
+    const tier = String(readSkuName(lb) ?? '').toLowerCase();
     if (tier === 'basic') {
       return false;
     }
@@ -714,7 +752,7 @@ export class ResourceDetectorService {
    */
   private readSku(resource: ResourceLike): string {
     const vmSize = readProperty<{ vmSize?: string }>(resource, 'hardwareProfile')?.vmSize;
-    return vmSize ?? resource.sku?.name ?? 'standard';
+    return vmSize ?? readSkuName(resource) ?? 'standard';
   }
 
   /**

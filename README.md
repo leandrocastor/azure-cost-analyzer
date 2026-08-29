@@ -227,6 +227,35 @@ Um relatório de FinOps só é útil se cada achado resistir ao contraditório d
 
 A economia exibida também é fiel: quando o preço de lista é resolvido, ele é usado **literalmente**, sem multiplicadores ou pisos artificiais que inflavam os valores.
 
+#### Conciliação com o custo realmente faturado
+
+A detecção de ociosidade raciocina sobre utilização e preço de lista, o que é uma **projeção** do que o recurso custaria. O Cost Management sabe o que ele **de fato custou**. Quando os dois divergem, a fatura vence:
+
+| Situação na fatura | O que o relatório faz |
+| --- | --- |
+| Recurso nunca gerou custo no período | O achado é **descartado**. É o caso de um App Service no tier F1 (Free): não há economia a capturar |
+| Recurso gerou custo antes, mas parou | O achado é **mantido e explicitado**: "sem custo faturado desde maio de 2026, quando custou R$ 210,50". A economia vai a zero, porque não há nada a recuperar daqui para frente |
+| Recurso ainda gera custo | A economia estimada é **limitada ao valor realmente faturado** no mês mais recente. Nenhuma ação pode economizar mais do que o recurso custa |
+| Recurso ausente dos dados de custo | A estimativa é mantida, mas marcada como **não confirmada pela fatura**, com a confiança reduzida |
+
+Cada achado exibe o custo mês a mês, de modo que a evolução da cobrança fica visível em vez de escondida atrás de um único número estimado.
+
+#### Base documental de cada recomendação
+
+Uma sugestão plausível pode ser simplesmente errada para o modelo de cobrança do serviço. Toda recomendação carrega o modelo de cobrança, o motivo pelo qual a ação reduz a fatura e o link para a documentação oficial da Microsoft.
+
+O exemplo mais importante é o **App Service**: agendar o desligamento fora do horário comercial **não gera economia**. A documentação afirma que planos continuam sendo cobrados porque seguem reservando as instâncias de VM configuradas ([Delete an App Service plan](https://learn.microsoft.com/azure/app-service/app-service-plan-manage#delete-an-app-service-plan)). A economia real vem de reduzir o tier do plano, consolidar aplicativos ou mover para o tier Free — e é isso que o script de remediação executa, agindo sobre o App Service Plan e não sobre o site.
+
+| Serviço | Ação recomendada | Ação descartada |
+| --- | --- | --- |
+| Virtual Machines em uso | Reduzir o tamanho | — |
+| Virtual Machines desalocadas | Remover VM e discos retidos | Desligar (a computação já não é cobrada) |
+| Managed Disks | Excluir o disco | Desanexar (a cobrança é pelo tamanho provisionado) |
+| Public IP | Excluir o endereço | Desassociar (a cobrança é por existir) |
+| App Service | Reduzir o tier do plano ou consolidar | Agendar desligamento (o plano segue reservado) |
+| Azure SQL | Reduzir o tier ou adotar Serverless | — |
+| Storage | Migrar para camadas Cool/Archive | — |
+
 #### Scorecard do Well-Architected Framework
 
 O relatório atribui uma nota de 0 a 100 ao pilar **Cost Optimization**, avaliando oito controles: proporção de desperdício, recursos órfãos, tags de responsável, tags de ambiente, rightsizing, visibilidade de custos, concentração de gasto e acionabilidade das recomendações. Controles que não podem ser medidos no ambiente são excluídos do cálculo em vez de baixarem a nota silenciosamente.

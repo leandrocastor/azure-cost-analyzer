@@ -161,6 +161,7 @@ export const REPORT_CLIENT_SCRIPT = `
             + '<div class="rec-title">' + esc(r.title || '—') + '</div>'
             + '<div class="rec-desc">' + esc(r.description || '') + '</div>'
             + renderEvidence(r.evidence)
+            + renderRationale(r.billingRationale)
             + '<div class="rec-meta">'
             + '<span class="badge ' + esc(risk) + '">Risco: ' + esc(LEVEL_LABELS[risk] || risk) + '</span>'
             + '<span class="badge ' + esc(effort) + '">Esforço: ' + esc(LEVEL_LABELS[effort] || effort) + '</span>'
@@ -293,7 +294,64 @@ export const REPORT_CLIENT_SCRIPT = `
           + (evidence.observationWindowDays > 0
               ? '<p class="muted">Janela observada: ' + evidence.observationWindowDays + ' dias · ' + evidence.dataPoints + ' pontos de telemetria.</p>'
               : '')
+          + renderBilled(evidence.billed)
           + (evidence.caveat ? '<p class="caveat">' + esc(evidence.caveat) + '</p>' : '')
+          + '</details>';
+      }
+
+      const MONTH_NAMES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+        'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+      /** Converte AAAA-MM no nome do mês, que é o formato esperado por leitor executivo. */
+      function monthLabel(month) {
+        const parts = String(month).split('-');
+        const name = MONTH_NAMES[Number(parts[1]) - 1];
+        return name ? name + ' de ' + parts[0] : month;
+      }
+
+      /**
+       * Mostra o que o recurso realmente custou, mês a mês. Um número estimado por
+       * preço de lista é uma projeção; isto é a fatura, e é o que sustenta a
+       * recomendação diante da área financeira.
+       */
+      function renderBilled(billed) {
+        if (!billed) return '';
+
+        const months = Object.keys(billed.monthly || {}).sort();
+        if (months.length === 0) return '';
+
+        const cells = months.map(function (month) {
+          const value = billed.monthly[month] || 0;
+          const zero = value < 0.01;
+          return '<li' + (zero ? ' class="caveat"' : '') + '><strong>' + esc(monthLabel(month)) + ':</strong> '
+            + esc(fmtFull(value)) + (zero ? ' (sem cobrança)' : '') + '</li>';
+        }).join('');
+
+        const note = billed.billingStopped
+          ? '<p class="caveat">O recurso deixou de gerar custo durante o período analisado'
+            + (billed.lastMonthWithCost ? ', a última cobrança foi em ' + esc(monthLabel(billed.lastMonthWithCost)) : '')
+            + '. Não há economia futura a capturar.</p>'
+          : '';
+
+        return '<p class="muted"><strong>Custo realmente faturado:</strong> ' + esc(fmtFull(billed.observedTotal))
+          + ' no período.</p><ul>' + cells + '</ul>' + note;
+      }
+
+      /**
+       * Explica por que a ação reduz a fatura daquele serviço, com o link da
+       * documentação oficial. Sugestão sem base documental não entra no relatório.
+       */
+      function renderRationale(rationale) {
+        if (!rationale) return '';
+
+        return '<details class="evidence rationale">'
+          + '<summary>Base documental da recomendação</summary>'
+          + '<p class="muted"><strong>Como é cobrado:</strong> ' + esc(rationale.billingModel) + '</p>'
+          + '<p class="muted"><strong>Por que gera economia:</strong> ' + esc(rationale.whySaves) + '</p>'
+          + (rationale.notApplicable
+              ? '<p class="caveat"><strong>Não se aplica:</strong> ' + esc(rationale.notApplicable) + '</p>'
+              : '')
+          + '<p class="muted"><a href="' + esc(rationale.documentationUrl) + '" target="_blank" rel="noopener noreferrer">Documentação oficial do Azure</a></p>'
           + '</details>';
       }
 
@@ -797,6 +855,9 @@ export const generateStaticReport = (data: StaticReportData): string => {
       .evidence li { margin-bottom: 0.25rem; color: var(--muted); }
       .evidence p { margin: 0.35rem 0; color: var(--muted); }
       .evidence .caveat { color: var(--amber); }
+      .evidence a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(96,165,250,0.35); }
+      .evidence a:hover { border-bottom-color: var(--accent); }
+      .rationale summary { color: var(--accent); }
       .muted { color: var(--muted); font-size: 0.78rem; }
 
       /* Run comparison */
