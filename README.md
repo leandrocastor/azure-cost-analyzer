@@ -14,6 +14,10 @@ Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboa
 - **Plano de remediação executável**: comandos `az` prontos, com verificação prévia, rollback e trechos equivalentes em Terraform e Bicep, mais um script `apply-remediation.sh` que roda em modo simulação por padrão
 - **Comparativo entre execuções** (cost diff): o que mudou desde o último relatório e qual service ou resource group causou a variação
 - **Desperdício por responsável** (showback/chargeback): atribuição do desperdício via tags de owner/team/cost center, com indicador de cobertura de tags
+- **Economia calculada com preço real do Azure**: as estimativas vêm da Retail Prices API na moeda de faturamento, e não de médias fixas por tipo de recurso
+- **Evidência auditável em cada achado**: janela de observação, número de pontos coletados, métricas usadas, origem do preço e nível de confiança
+- **Scorecard do Well-Architected Framework** (pilar Cost Optimization): nota de 0 a 100, conceito de A a E e oito controles avaliados individualmente
+- **Custo da inação**: ao comparar com um relatório anterior, mostra quanto cada recomendação ignorada já custou e quanto custará em 12 meses
 - API do dashboard em Express com placeholder de frontend estático
 - TypeScript estrito, validação com Zod, logging com Winston, cobertura com Vitest, ESLint e Prettier
 
@@ -149,6 +153,7 @@ Sem `--subscription`, todas as assinaturas habilitadas visíveis à identidade a
 | `--compare`, `-c` | Caminho de um relatório anterior (HTML ou JSON) para gerar o comparativo |
 | `--owner-tags` | Tags usadas para atribuir o desperdício a um responsável, separadas por vírgula |
 | `--no-remediation` | Não gera o plano de remediação nem o script `apply-remediation.sh` |
+| `--currency` | Moeda usada na consulta de preços de lista (padrão: a moeda de faturamento da assinatura) |
 
 #### Plano de remediação
 
@@ -189,6 +194,34 @@ cost-analyzer export --owner-tags responsavel,centro-de-custo
 
 O relatório também mostra a cobertura de tags de responsável, que é o principal indicador de maturidade para viabilizar cobrança interna.
 
+#### Preço real e evidência
+
+A economia estimada de cada achado é resolvida na [Azure Retail Prices API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices), que é pública, não exige autenticação e não consome a cota do tenant. Um disco Premium de 128 GB é cobrado pelo tier P10, e uma VM `Standard_D2s_v3` custa muito mais do que uma `Standard_B1s` — a diferença aparece no relatório em vez de ser achatada em uma média.
+
+Cada achado carrega a evidência que o sustenta:
+
+| Campo | Significado |
+| --- | --- |
+| Janela de observação | Por quantos dias o recurso foi observado |
+| Pontos coletados | Quantas amostras de métrica embasam a conclusão |
+| Métricas | Os valores medidos, com unidade |
+| Base do cálculo | `retail-price` (preço de lista) ou `heuristic` (média aproximada) |
+| Confiança | `high`, `medium` ou `low` |
+
+> Os valores são **preços de lista públicos**. Descontos de Enterprise Agreement, CSP, reservas e Savings Plans não são refletidos, então a economia real tende a ser menor do que a exibida. Quando a SKU ou a região não tem meter correspondente, o relatório cai para a média aproximada e marca o achado com base `heuristic` e confiança reduzida.
+
+#### Scorecard do Well-Architected Framework
+
+O relatório atribui uma nota de 0 a 100 ao pilar **Cost Optimization**, avaliando oito controles: proporção de desperdício, recursos órfãos, tags de responsável, tags de ambiente, rightsizing, visibilidade de custos, concentração de gasto e acionabilidade das recomendações. Controles que não podem ser medidos no ambiente são excluídos do cálculo em vez de baixarem a nota silenciosamente.
+
+#### Custo da inação
+
+Quando o relatório é gerado com `--compare`, as recomendações que continuam em aberto deixam de ser sugestões e passam a ser dívida quantificada: "este disco está ocioso há 90 dias e já custou R$ 524,79". O relatório mostra também quantas recomendações foram resolvidas no período e a projeção de desperdício para 12 meses caso nada mude.
+
+```bash
+cost-analyzer export --period 1 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
+```
+
 ## Roadmap
 
 Próximos diferenciais planejados:
@@ -200,6 +233,7 @@ Próximos diferenciais planejados:
 - [ ] **Detecção de anomalias com causa raiz** — identifica qual recurso ou resource group provocou o pico de gasto
 - [ ] **Simulador de compromissos** — compara Reserved Instances, Savings Plans e Spot, com cálculo de payback
 - [ ] **Score de maturidade FinOps** — nota de 0 a 100 para o tenant, com comparação entre execuções
+- [ ] **MCP Server** — expõe os achados como ferramentas para agentes de IA, permitindo perguntar "por que meu custo subiu?" direto no GitHub Copilot ou no Claude. Exige instalação local com um cliente MCP (VS Code, Claude Desktop) e, por isso, **não funciona na execução pontual via Azure Cloud Shell**
 
 ## Screenshot do dashboard
 

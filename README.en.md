@@ -14,6 +14,10 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 - **Executable remediation plan**: ready-to-run `az` commands with pre-checks, rollback and equivalent Terraform/Bicep snippets, plus an `apply-remediation.sh` script that is dry-run by default
 - **Run-to-run comparison** (cost diff): what changed since the last report and which service or resource group drove it
 - **Waste by owner** (showback/chargeback): waste attributed through owner/team/cost center tags, with a tag coverage indicator
+- **Savings priced from the real Azure list price**: estimates come from the Retail Prices API in the billing currency, not from flat per-resource-type averages
+- **Auditable evidence on every finding**: observation window, number of data points collected, metrics used, price source, and confidence level
+- **Well-Architected Framework scorecard** (Cost Optimization pillar): a 0 to 100 score, an A to E grade, and eight individually assessed controls
+- **Cost of inaction**: when compared against a previous report, it shows how much each ignored recommendation has already cost and how much it will cost over 12 months
 - Express dashboard API with static frontend placeholder
 - Strict TypeScript, Zod validation, Winston logging, Vitest coverage, ESLint, and Prettier
 
@@ -149,6 +153,7 @@ Without `--subscription`, every enabled subscription visible to the authenticate
 | `--compare`, `-c` | Path to a previous report (HTML or JSON) to diff against |
 | `--owner-tags` | Comma-separated tag keys used to attribute waste to an owner |
 | `--no-remediation` | Skip the remediation plan and the `apply-remediation.sh` script |
+| `--currency` | Currency used for list price lookups (defaults to the subscription billing currency) |
 
 #### Remediation plan
 
@@ -189,6 +194,34 @@ cost-analyzer export --owner-tags responsavel,cost-center
 
 The report also shows owner tag coverage, the key maturity indicator for enabling internal chargeback.
 
+#### Real pricing and evidence
+
+The estimated savings of each finding are resolved through the [Azure Retail Prices API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices), which is public, requires no authentication, and does not consume the tenant quota. A 128 GB Premium disk is billed at the P10 tier, and a `Standard_D2s_v3` VM costs far more than a `Standard_B1s` — that difference shows up in the report instead of being flattened into an average.
+
+Every finding carries the evidence behind it:
+
+| Field | Meaning |
+| --- | --- |
+| Observation window | How many days the resource was observed |
+| Data points | How many metric samples support the conclusion |
+| Metrics | The measured values, with units |
+| Savings basis | `retail-price` (list price) or `heuristic` (coarse average) |
+| Confidence | `high`, `medium`, or `low` |
+
+> These are **public list prices**. Enterprise Agreement, CSP, reservation, and Savings Plan discounts are not reflected, so real savings tend to be lower than shown. When a SKU or region has no matching meter, the report falls back to the coarse average and marks the finding with a `heuristic` basis and reduced confidence.
+
+#### Well-Architected Framework scorecard
+
+The report assigns a 0 to 100 score to the **Cost Optimization** pillar, assessing eight controls: waste ratio, orphaned resources, owner tagging, environment tagging, rightsizing, cost visibility, spend concentration, and recommendation actionability. Controls that cannot be measured in the environment are excluded from the calculation instead of silently lowering the score.
+
+#### Cost of inaction
+
+When the report runs with `--compare`, recommendations that remain open stop being suggestions and become quantified debt: "this disk has been idle for 90 days and has already cost R$ 524.79". The report also shows how many recommendations were resolved in the period and the projected 12-month waste if nothing changes.
+
+```bash
+cost-analyzer export --period 1 --output ./report-september.html --compare ./report-august.html
+```
+
 ## Roadmap
 
 Planned differentiators:
@@ -199,6 +232,7 @@ Planned differentiators:
 - [ ] **Scheduled Teams and Slack digest** — periodic summary with history published to a static site
 - [ ] **Anomaly detection with root cause** — pinpoints which resource or resource group caused a spend spike
 - [ ] **Commitment simulator** — compares Reserved Instances, Savings Plans, and Spot, including payback
+- [ ] **MCP Server** — exposes findings as tools for AI agents, so you can ask "why did my cost go up?" straight from GitHub Copilot or Claude. Requires a local install with an MCP client (VS Code, Claude Desktop) and therefore **does not work in the one-off Azure Cloud Shell run**
 - [ ] **FinOps maturity score** — a 0 to 100 score for the tenant, tracked across runs
 
 ## Dashboard screenshot

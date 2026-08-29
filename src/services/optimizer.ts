@@ -38,6 +38,9 @@ export class OptimizerService {
         roi,
         actionType,
         status: 'new',
+        // Carrying the evidence forward keeps the recommendation auditable: the
+        // reader can check the measurements and the price basis behind the figure.
+        ...(idleResource.evidence ? { evidence: idleResource.evidence } : {}),
       });
     });
 
