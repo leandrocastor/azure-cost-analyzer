@@ -57,6 +57,27 @@ const priceFetchMock = vi.fn();
 /** Keeps the detector offline: pricing is an enrichment, not the subject of these tests. */
 const offlinePricing = (): PricingService => new PricingService({ fetchImpl: priceFetchMock as never });
 
+/**
+ * Builds a metric series with enough samples to clear the minimum evidence bar.
+ * A single point is treated as "never measured" and no longer yields a finding.
+ */
+const series = (metricName: string, value: number, key: 'average' | 'total' = 'average', points = 5): unknown => ({
+  value: [
+    {
+      name: { value: metricName },
+      unit: 'Count',
+      timeseries: [
+        {
+          data: Array.from({ length: points }, (_, index) => ({
+            [key]: value,
+            timestamp: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
+          })),
+        },
+      ],
+    },
+  ],
+});
+
 const iterable = <T>(items: T[]): AsyncIterable<T> => ({
   [Symbol.asyncIterator]: async function* generator() {
     for (const item of items) {
@@ -87,8 +108,8 @@ describe('ResourceDetectorService', () => {
   });
 
   it('detects idle VMs', async () => {
-    vmListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-a', name: 'vm-a', location: 'eastus', sku: { name: 'Standard' }, properties: { provisioningState: 'Succeeded' } }]));
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: 'Percentage CPU' }, unit: 'Percent', timeseries: [{ data: [{ average: 1, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    vmListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-a', name: 'vm-a', location: 'eastus', hardwareProfile: { vmSize: 'Standard_D2s_v3' }, provisioningState: 'Succeeded' }]));
+    metricsListMock.mockResolvedValue(series('Percentage CPU', 1));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectIdleVMs();
     expect(items).toHaveLength(1);
@@ -99,8 +120,8 @@ describe('ResourceDetectorService', () => {
   });
 
   it('detects idle app services', async () => {
-    webAppsListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-a', name: 'app-a', location: 'eastus' }]));
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: 'Requests' }, unit: 'Count', timeseries: [{ data: [{ total: 50, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    webAppsListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-a', name: 'app-a', location: 'eastus', sku: { tier: 'Standard' } }]));
+    metricsListMock.mockResolvedValue(series('Requests', 50, 'total'));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectIdleAppServices();
     expect(items).toHaveLength(1);
@@ -112,7 +133,7 @@ describe('ResourceDetectorService', () => {
 
   it('detects idle storage accounts', async () => {
     storageListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Storage/storageAccounts/store-a', name: 'store-a', location: 'eastus' }]));
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: 'Transactions' }, unit: 'Count', timeseries: [{ data: [{ total: 0, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    metricsListMock.mockResolvedValue(series('Transactions', 0, 'total'));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectIdleStorage();
     expect(items).toHaveLength(1);
@@ -121,28 +142,28 @@ describe('ResourceDetectorService', () => {
   it('detects idle SQL databases', async () => {
     sqlServersListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a', name: 'sql-a', location: 'eastus' }]));
     sqlDatabasesListByServerMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a/databases/db-a', name: 'db-a', location: 'eastus' }]));
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: 'dtu_consumption_percent' }, unit: 'Percent', timeseries: [{ data: [{ average: 2, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    metricsListMock.mockResolvedValue(series('dtu_consumption_percent', 2));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectIdleSqlDatabases();
     expect(items).toHaveLength(1);
   });
 
   it('detects unattached disks', async () => {
-    disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', properties: {} }]));
+    disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', diskState: 'Unattached' }]));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectUnattachedDisks();
     expect(items).toHaveLength(1);
   });
 
   it('detects unused public IPs', async () => {
-    publicIpListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/publicIPAddresses/ip-a', name: 'ip-a', location: 'eastus', properties: {} }]));
+    publicIpListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/publicIPAddresses/ip-a', name: 'ip-a', location: 'eastus', sku: { name: 'Standard' } }]));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectUnusedPublicIPs();
     expect(items).toHaveLength(1);
   });
 
   it('detects unused load balancers', async () => {
-    loadBalancersListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/loadBalancers/lb-a', name: 'lb-a', location: 'eastus', properties: { backendAddressPools: [] } }]));
+    loadBalancersListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/loadBalancers/lb-a', name: 'lb-a', location: 'eastus', sku: { name: 'Standard' }, backendAddressPools: [] }]));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectUnusedLoadBalancers();
     expect(items).toHaveLength(1);
@@ -150,13 +171,13 @@ describe('ResourceDetectorService', () => {
 
   it('aggregates all detectors', async () => {
     vmListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-a', name: 'vm-a', location: 'eastus', properties: {} }]));
-    disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', properties: {} }]));
+    disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', diskState: 'Unattached' }]));
     webAppsListMock.mockReturnValue(iterable([]));
     storageListMock.mockReturnValue(iterable([]));
     sqlServersListMock.mockReturnValue(iterable([]));
     publicIpListAllMock.mockReturnValue(iterable([]));
     loadBalancersListAllMock.mockReturnValue(iterable([]));
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: 'Percentage CPU' }, unit: 'Percent', timeseries: [{ data: [{ average: 1, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    metricsListMock.mockResolvedValue(series('Percentage CPU', 1));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
     const items = await service.detectAll();
     expect(items.length).toBeGreaterThanOrEqual(2);
@@ -173,7 +194,7 @@ describe('ResourceDetectorService', () => {
     ['app', 'Requests', 50],
     ['storage', 'Transactions', 0],
   ])('normalizes metrics for %s detectors', async (kind, metricName, value) => {
-    metricsListMock.mockResolvedValue({ value: [{ name: { value: metricName }, unit: 'Count', timeseries: [{ data: [{ average: value, timestamp: '2026-01-01T00:00:00.000Z' }] }] }] });
+    metricsListMock.mockResolvedValue(series(metricName, value));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
 
     if (kind === 'vm') {
@@ -184,7 +205,7 @@ describe('ResourceDetectorService', () => {
     }
 
     if (kind === 'app') {
-      webAppsListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-a', name: 'app-a', location: 'eastus' }]));
+      webAppsListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-a', name: 'app-a', location: 'eastus', sku: { tier: 'Standard' } }]));
       const items = await service.detectIdleAppServices();
       expect(items[0]?.metrics[0]?.metricName).toBe(metricName);
       return;
@@ -203,7 +224,8 @@ describe('ResourceDetectorService', () => {
             name: 'disk-a',
             location: 'brazilsouth',
             sku: { name: 'Premium_LRS' },
-            properties: { diskSizeGB: 128 },
+            diskState: 'Unattached',
+            diskSizeGB: 128,
           },
         ]),
       );
@@ -231,7 +253,8 @@ describe('ResourceDetectorService', () => {
             name: 'disk-b',
             location: 'brazilsouth',
             sku: { name: 'StandardSSD_ZRS' },
-            properties: { diskSizeGB: 700 },
+            diskState: 'Unattached',
+            diskSizeGB: 700,
           },
         ]),
       );
@@ -249,7 +272,8 @@ describe('ResourceDetectorService', () => {
             name: 'disk-c',
             location: 'brazilsouth',
             sku: { name: 'Premium_LRS' },
-            properties: { diskSizeGB: 128 },
+            diskState: 'Unattached',
+            diskSizeGB: 128,
           },
         ]),
       );
@@ -269,7 +293,6 @@ describe('ResourceDetectorService', () => {
             name: 'ip-a',
             location: 'brazilsouth',
             sku: { name: 'Standard' },
-            properties: {},
           },
         ]),
       );
@@ -296,20 +319,408 @@ describe('ResourceDetectorService', () => {
             id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-a',
             name: 'vm-a',
             location: 'eastus',
-            sku: { name: 'Standard_D2s_v3' },
-            properties: { provisioningState: 'Succeeded' },
+            hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+            provisioningState: 'Succeeded',
           },
         ]),
       );
-      metricsListMock.mockResolvedValue({
-        value: [{ name: { value: 'Percentage CPU' }, unit: 'Percent', timeseries: [{ data: [{ average: 1, timestamp: '2026-01-01T00:00:00.000Z' }] }] }],
-      });
+      metricsListMock.mockResolvedValue(series('Percentage CPU', 1));
 
       const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleVMs();
 
       expect(items[0]?.evidence?.observationWindowDays).toBeGreaterThan(0);
-      expect(items[0]?.evidence?.dataPoints).toBe(1);
+      expect(items[0]?.evidence?.dataPoints).toBe(5);
       expect(items[0]?.evidence?.metrics.length).toBeGreaterThan(0);
+    });
+  });
+  describe('false positives', () => {
+    it('does not call a disk orphaned when it belongs to a stopped VM', async () => {
+      disksListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-parada',
+            name: 'disk-parada',
+            location: 'eastus',
+            sku: { name: 'Premium_LRS' },
+            // Azure reports "Reserved" for a disk attached to a deallocated VM.
+            diskState: 'Reserved',
+            managedBy: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-parada',
+            diskSizeGB: 128,
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnattachedDisks();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('reads the disk owner from the flattened payload the SDK returns', async () => {
+      disksListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-anexado',
+            name: 'disk-anexado',
+            location: 'eastus',
+            sku: { name: 'Premium_LRS' },
+            // The SDK flattens ARM properties; reading only the nested envelope
+            // reported every disk in the tenant as an orphan.
+            managedBy: '/subscriptions/sub/providers/Microsoft.Compute/virtualMachines/vm-a',
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnattachedDisks();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('keeps a disk that is being served through an active SAS', async () => {
+      disksListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-sas',
+            name: 'disk-sas',
+            location: 'eastus',
+            sku: { name: 'Premium_LRS' },
+            diskState: 'ActiveSAS',
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnattachedDisks();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('does not advise stopping a VM that is already deallocated', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-parada',
+            name: 'vm-parada',
+            location: 'eastus',
+            hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+            instanceView: { statuses: [{ code: 'ProvisioningState/succeeded' }, { code: 'PowerState/deallocated' }] },
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Percentage CPU', 0));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleVMs();
+
+      // A deallocated VM already costs nothing for compute.
+      expect(items).toHaveLength(0);
+    });
+
+    it('does not claim a resource is idle when it was never measured', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-nova',
+            name: 'vm-nova',
+            location: 'eastus',
+            hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+            instanceView: { statuses: [{ code: 'PowerState/running' }] },
+          },
+        ]),
+      );
+      // No samples at all: a VM created today, or missing Monitoring Reader rights.
+      metricsListMock.mockResolvedValue({ value: [] });
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleVMs();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('ignores a single stray sample that cannot support a conclusion', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-b',
+            name: 'vm-b',
+            location: 'eastus',
+            hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Percentage CPU', 1, 'average', 1));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleVMs();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('prices a VM by the size in its hardware profile', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-c',
+            name: 'vm-c',
+            location: 'brazilsouth',
+            hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Percentage CPU', 1));
+
+      await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleVMs();
+
+      // VMs have no sku field, so reading sku.name labelled every VM "standard"
+      // and no meter ever matched.
+      expect(String(priceFetchMock.mock.calls[0]?.[0])).toContain('Standard_D2s_v3');
+    });
+
+    it('keeps a public IP that is consumed by a NAT gateway', async () => {
+      publicIpListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/publicIPAddresses/ip-nat',
+            name: 'ip-nat',
+            location: 'eastus',
+            sku: { name: 'Standard' },
+            // A NAT gateway consumes the address without exposing an ipConfiguration.
+            natGateway: { id: '/subscriptions/sub/natGateways/nat-a' },
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnusedPublicIPs();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('ignores an unassociated Basic dynamic IP because it is not billed', async () => {
+      publicIpListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/publicIPAddresses/ip-basic',
+            name: 'ip-basic',
+            location: 'eastus',
+            sku: { name: 'Basic' },
+            publicIPAllocationMethod: 'Dynamic',
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnusedPublicIPs();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('ignores a Basic load balancer because it carries no charge', async () => {
+      loadBalancersListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/loadBalancers/lb-basic',
+            name: 'lb-basic',
+            location: 'eastus',
+            sku: { name: 'Basic' },
+            backendAddressPools: [],
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnusedLoadBalancers();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('keeps a load balancer whose pool still has members', async () => {
+      loadBalancersListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/loadBalancers/lb-ativo',
+            name: 'lb-ativo',
+            location: 'eastus',
+            sku: { name: 'Standard' },
+            backendAddressPools: [{ backendIPConfigurations: [{ id: '/nic-a' }] }],
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnusedLoadBalancers();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('flags a Standard load balancer whose pool is empty', async () => {
+      loadBalancersListAllMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Network/loadBalancers/lb-vazio',
+            name: 'lb-vazio',
+            location: 'eastus',
+            sku: { name: 'Standard' },
+            backendAddressPools: [{ backendIPConfigurations: [] }],
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectUnusedLoadBalancers();
+
+      expect(items).toHaveLength(1);
+    });
+
+    it('does not offer savings for an App Service on a free plan', async () => {
+      webAppsListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-free',
+            name: 'app-free',
+            location: 'eastus',
+            sku: { tier: 'Free' },
+          },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('Requests', 0, 'total'));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServices();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('measures a vCore database by CPU when it reports no DTU', async () => {
+      sqlServersListMock.mockReturnValue(
+        iterable([{ id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a', name: 'sql-a', location: 'eastus' }]),
+      );
+      sqlDatabasesListByServerMock.mockReturnValue(
+        iterable([
+          { id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a/databases/db-vcore', name: 'db-vcore', location: 'eastus' },
+        ]),
+      );
+      metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
+        options.metricnames === 'cpu_percent' ? series('cpu_percent', 2) : { value: [] },
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases();
+
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toContain('CPU');
+    });
+
+    it('skips the master database, which Azure creates and does not bill', async () => {
+      sqlServersListMock.mockReturnValue(
+        iterable([{ id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a', name: 'sql-a', location: 'eastus' }]),
+      );
+      sqlDatabasesListByServerMock.mockReturnValue(
+        iterable([
+          { id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a/databases/master', name: 'master', location: 'eastus' },
+        ]),
+      );
+      metricsListMock.mockResolvedValue(series('dtu_consumption_percent', 0));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('reports the provisioning state the SDK returns at the top level', async () => {
+      disksListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-d',
+            name: 'disk-d',
+            location: 'eastus',
+            sku: { name: 'Premium_LRS' },
+            diskState: 'Unattached',
+            provisioningState: 'Succeeded',
+          },
+        ]),
+      );
+
+      const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
+      await service.detectUnattachedDisks();
+
+      expect(service.getInventory()[0]?.status).toBe('Succeeded');
+    });
+  });
+  describe('stopped VMs with billed disks', () => {
+    const stoppedVm = {
+      id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-parada',
+      name: 'vm-parada',
+      location: 'brazilsouth',
+      hardwareProfile: { vmSize: 'Standard_D2s_v3' },
+      instanceView: { statuses: [{ code: 'PowerState/deallocated' }] },
+      storageProfile: {
+        osDisk: { managedDisk: { id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/os-disk' } },
+        dataDisks: [{ managedDisk: { id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/data-disk' } }],
+      },
+    };
+
+    const osDisk = {
+      id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/os-disk',
+      name: 'os-disk',
+      location: 'brazilsouth',
+      sku: { name: 'Premium_LRS' },
+      diskState: 'Reserved',
+      managedBy: stoppedVm.id,
+      diskSizeGB: 128,
+    };
+
+    const dataDisk = { ...osDisk, id: stoppedVm.storageProfile.dataDisks[0]!.managedDisk.id, name: 'data-disk' };
+
+    it('charges the disks that stay provisioned while the VM is off', async () => {
+      vmListAllMock.mockReturnValue(iterable([stoppedVm]));
+      disksListMock.mockReturnValue(iterable([osDisk, dataDisk]));
+      priceFetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          Items: [{ retailPrice: 174.93, currencyCode: 'BRL', unitOfMeasure: '1/Month', meterName: 'P10 LRS Disk', armRegionName: 'brazilsouth' }],
+        }),
+      });
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectStoppedVMsWithBilledDisks();
+
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toContain('desligada');
+      // Two P10 disks, priced from the real meter rather than a flat guess.
+      expect(items[0]?.estimatedMonthlySavings).toBe(349.86);
+      expect(items[0]?.evidence?.savingsBasis).toBe('retail-price');
+    });
+
+    it('reports the provisioned storage as the evidence for the charge', async () => {
+      vmListAllMock.mockReturnValue(iterable([stoppedVm]));
+      disksListMock.mockReturnValue(iterable([osDisk, dataDisk]));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectStoppedVMsWithBilledDisks();
+
+      const labels = items[0]?.evidence?.metrics.map((metric) => metric.label) ?? [];
+      expect(labels).toContain('Discos anexados');
+      expect(items[0]?.evidence?.metrics.find((metric) => metric.label === 'Armazenamento provisionado')?.value).toBe(256);
+    });
+
+    it('ignores a running VM', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([{ ...stoppedVm, instanceView: { statuses: [{ code: 'PowerState/running' }] } }]),
+      );
+      disksListMock.mockReturnValue(iterable([osDisk, dataDisk]));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectStoppedVMsWithBilledDisks();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('does not query disks when nothing is deallocated', async () => {
+      vmListAllMock.mockReturnValue(
+        iterable([{ ...stoppedVm, instanceView: { statuses: [{ code: 'PowerState/running' }] } }]),
+      );
+      disksListMock.mockReturnValue(iterable([osDisk]));
+
+      await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectStoppedVMsWithBilledDisks();
+
+      expect(disksListMock).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the coarse estimate when a disk cannot be priced', async () => {
+      vmListAllMock.mockReturnValue(iterable([stoppedVm]));
+      disksListMock.mockReturnValue(iterable([osDisk, { ...dataDisk, sku: { name: 'UltraSSD_LRS' }, diskSizeGB: 0 }]));
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectStoppedVMsWithBilledDisks();
+
+      // A partial sum must never be presented as a precise figure.
+      expect(items[0]?.evidence?.savingsBasis).toBe('heuristic');
+      expect(items[0]?.evidence?.caveat).toBeDefined();
     });
   });
 });

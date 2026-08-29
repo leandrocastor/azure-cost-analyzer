@@ -17,8 +17,18 @@ export type ExecutiveSummaryInput = {
   subscriptionCount: number;
 };
 
-const money = (value: number, currency: string): string =>
-  `${currency} ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const money = (value: number, currency: string): string => {
+  try {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${currency} ${value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+};
 
 const percent = (value: number): string =>
   `${(value * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`;

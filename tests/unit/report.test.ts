@@ -230,4 +230,25 @@ describe('generateStaticReport — seções de diferenciação', () => {
     expect(html).toContain('"confidence":"high"');
     expect(html).toContain('"observationWindowDays":30');
   });
+  it('wraps every table in a horizontal scroll container so wide content is never clipped', () => {
+    const html = generateStaticReport(fullData);
+    const wrappers = html.match(/table-scroll/g) ?? [];
+
+    // 1 declaracao no CSS + 5 tabelas envolvidas no script cliente.
+    expect(wrappers.length).toBeGreaterThanOrEqual(6);
+    expect(html).not.toMatch(/innerHTML = '<table>'/);
+  });
+
+  it('ships a print stylesheet so the report can be exported to PDF', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('@media print');
+  });
+
+  it('formats currency using the currency reported by Azure instead of a hardcoded symbol', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain("style: 'currency'");
+    expect(html).not.toContain("'$' + n.toLocaleString");
+  });
 });

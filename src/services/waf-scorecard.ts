@@ -31,6 +31,24 @@ const WASTE_TOLERANCE_PERCENT = 5;
 
 const round = (value: number): number => Number(value.toFixed(2));
 
+/** Formata numeros no padrao pt-BR usado no restante do relatorio. */
+const num = (value: number, digits = 1): string =>
+  value.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+/** Formata valores monetarios usando a moeda retornada pelo Azure. */
+const money = (value: number, currency: string): string => {
+  try {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${currency} ${num(value, 2)}`;
+  }
+};
+
 const percent = (part: number, total: number): number => (total <= 0 ? 0 : (part / total) * 100);
 
 /**
@@ -118,7 +136,7 @@ export class WafScorecardService {
       code: 'CO:05',
       title: 'Desperdício sob controle',
       status,
-      evidence: `Recursos ociosos representam ${ratio.toFixed(1)}% do gasto do período (${round(waste)} de ${round(total)} ${input.costs.currency}).`,
+      evidence: `Recursos ociosos representam ${num(ratio)}% do gasto do período (${money(waste, input.costs.currency)} de ${money(total, input.costs.currency)}).`,
       impact: 'high',
       recommendation:
         status === 'pass'
@@ -187,7 +205,7 @@ export class WafScorecardService {
       code: 'CO:02',
       title: 'Gasto atribuível a um responsável',
       status,
-      evidence: `${coverage.toFixed(0)}% dos recursos possuem tag de responsável (${tagged.length} de ${input.resources.length}).`,
+      evidence: `${num(coverage, 0)}% dos recursos possuem tag de responsável (${tagged.length} de ${input.resources.length}).`,
       impact: 'high',
       recommendation:
         status === 'pass'
@@ -228,7 +246,7 @@ export class WafScorecardService {
       code: 'CO:04',
       title: 'Ambientes identificados por tag',
       status,
-      evidence: `${coverage.toFixed(0)}% dos recursos identificam o ambiente por tag (${tagged.length} de ${input.resources.length}).`,
+      evidence: `${num(coverage, 0)}% dos recursos identificam o ambiente por tag (${tagged.length} de ${input.resources.length}).`,
       impact: 'medium',
       recommendation:
         status === 'pass'
@@ -316,7 +334,7 @@ export class WafScorecardService {
       code: 'CO:03',
       title: 'Concentração de gasto conhecida',
       status,
-      evidence: `O serviço ${top[0]} concentra ${share.toFixed(0)}% do gasto do período.`,
+      evidence: `O serviço ${top[0]} concentra ${num(share, 0)}% do gasto do período.`,
       impact: 'low',
       recommendation:
         status === 'pass'

@@ -210,6 +210,23 @@ Every finding carries the evidence behind it:
 
 > These are **public list prices**. Enterprise Agreement, CSP, reservation, and Savings Plan discounts are not reflected, so real savings tend to be lower than shown. When a SKU or region has no matching meter, the report falls back to the coarse average and marks the finding with a `heuristic` basis and reduced confidence.
 
+#### Detection accuracy
+
+A FinOps report is only useful when every finding survives pushback from the infrastructure team. These rules exist to eliminate false positives:
+
+| Situation | How it is handled |
+| --- | --- |
+| Disk attached to a stopped VM | **Not** an orphan. Azure marks it as `Reserved`; only `Unattached` counts as orphaned |
+| Stopped (`deallocated`) VM | Never suggested for shutdown (compute already costs zero). It becomes the "stopped VM with disks still billed" finding, priced from the real disk cost |
+| Resource with no metric samples | Skipped. An empty series means "never measured" — newly created resource, tier that does not emit the metric, or missing Monitoring Reader — not "idle". At least 3 samples are required |
+| Basic dynamic public IP | Skipped: not billed |
+| Basic Load Balancer | Skipped: not billed |
+| App Service on Free, Shared, Dynamic, or FlexConsumption tiers | Skipped: no fixed cost to save |
+| Azure SQL `master` database | Skipped: system database |
+| Public IP bound to a NAT Gateway or Prefix | Not orphaned, even without an `ipConfiguration` |
+
+Savings are equally faithful: when a retail price is resolved it is used **verbatim**, with no multipliers or artificial floors inflating the figures.
+
 #### Well-Architected Framework scorecard
 
 The report assigns a 0 to 100 score to the **Cost Optimization** pillar, assessing eight controls: waste ratio, orphaned resources, owner tagging, environment tagging, rightsizing, cost visibility, spend concentration, and recommendation actionability. Controls that cannot be measured in the environment are excluded from the calculation instead of silently lowering the score.
