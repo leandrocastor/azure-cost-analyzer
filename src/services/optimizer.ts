@@ -1,12 +1,95 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ActionType, IdleResource, Recommendation, Resource } from '@/models';
+import type { ActionType, BillingRationale, IdleResource, Recommendation, Resource } from '@/models';
 import { RecommendationSchema } from '@/models';
 
 const riskWeights: Record<'low' | 'medium' | 'high', number> = {
   low: 1,
   medium: 1.5,
   high: 2,
+};
+
+/**
+ * How each service is billed, and which action actually changes that bill.
+ *
+ * This table exists because plausible-sounding advice can be flatly wrong for a given
+ * service. Scheduling an App Service to shut down outside business hours saves nothing:
+ * the App Service Plan keeps reserving its VM instances and keeps billing regardless of
+ * whether the app is running. Every entry carries the Microsoft Learn page that states
+ * the billing behavior, so a recommendation can always be traced back to documentation
+ * instead of to an assumption.
+ */
+const BILLING_RATIONALES: { match: (resourceType: string) => boolean; action: ActionType; rationale: BillingRationale }[] = [
+  {
+    match: (type) => type.includes('disks'),
+    action: 'CLEANUP',
+    rationale: {
+      billingModel: 'Managed disks são cobrados pelo tamanho provisionado do tier, independentemente de estarem anexados ou de haver I/O.',
+      whySaves: 'A cobrança só cessa quando o disco é excluído; desanexar ou parar a VM não reduz o custo do disco.',
+      documentationUrl: 'https://learn.microsoft.com/azure/virtual-machines/disks-types',
+    },
+  },
+  {
+    match: (type) => type.includes('publicIPAddresses'),
+    action: 'CLEANUP',
+    rationale: {
+      billingModel: 'Endereços IP públicos Standard são cobrados por hora enquanto existirem, mesmo sem estarem associados a um recurso.',
+      whySaves: 'Excluir o endereço encerra a cobrança horária; apenas desassociar mantém o custo.',
+      documentationUrl: 'https://learn.microsoft.com/azure/virtual-network/ip-services/public-ip-addresses',
+    },
+  },
+  {
+    match: (type) => type.includes('sites'),
+    action: 'DOWNSIZE',
+    rationale: {
+      billingModel: 'O App Service é cobrado pelo App Service Plan, que reserva instâncias de VM pelo tier e pela quantidade configurada, e não pelo uso do aplicativo.',
+      whySaves: 'A economia vem de reduzir o tier do plano, consolidar aplicativos em um plano compartilhado ou mover para o tier Free. Reduzir a reserva é o que reduz a fatura.',
+      documentationUrl: 'https://learn.microsoft.com/azure/app-service/app-service-plan-manage#delete-an-app-service-plan',
+      notApplicable: 'Parar o aplicativo ou agendar desligamento fora do horário comercial não gera economia: a documentação afirma que planos continuam sendo cobrados porque seguem reservando as instâncias de VM configuradas.',
+    },
+  },
+  {
+    match: (type) => type.includes('storageAccounts'),
+    action: 'MIGRATE',
+    rationale: {
+      billingModel: 'Contas de armazenamento são cobradas por volume armazenado, camada de acesso, redundância e número de transações.',
+      whySaves: 'Mover dados frios para as camadas Cool ou Archive, ou excluir a conta quando não houver dado útil, reduz o componente de armazenamento da fatura.',
+      documentationUrl: 'https://learn.microsoft.com/azure/storage/blobs/access-tiers-overview',
+    },
+  },
+  {
+    match: (type) => type.includes('Sql'),
+    action: 'CHANGE_SKU',
+    rationale: {
+      billingModel: 'O Azure SQL Database é cobrado pelo modelo de compra escolhido (DTU ou vCore) e pelo tier provisionado, independentemente da carga aplicada.',
+      whySaves: 'Reduzir o tier ou adotar o modo Serverless, que pausa automaticamente, diminui a capacidade cobrada.',
+      documentationUrl: 'https://learn.microsoft.com/azure/azure-sql/database/serverless-tier-overview',
+    },
+  },
+];
+
+/**
+ * Billing rationale for a stopped VM, whose correct action differs from a running one:
+ * the compute charge already stopped, so only the retained disks are still billed.
+ */
+const STOPPED_VM_RATIONALE: BillingRationale = {
+  billingModel: 'Uma VM desalocada não gera custo de computação, mas os discos gerenciados que ela mantém continuam sendo cobrados pelo tamanho provisionado.',
+  whySaves: 'A economia vem de excluir a VM e seus discos, ou de capturar uma imagem e liberar os discos. Manter a VM desligada não elimina o custo remanescente.',
+  documentationUrl: 'https://learn.microsoft.com/azure/virtual-machines/states-billing',
+};
+
+/** Billing rationale for a running but underutilized VM. */
+const RUNNING_VM_RATIONALE: BillingRationale = {
+  billingModel: 'Máquinas virtuais em execução são cobradas por hora conforme o tamanho escolhido, independentemente da utilização de CPU.',
+  whySaves: 'Reduzir o tamanho da VM diminui a taxa horária. Desalocar a VM interrompe a cobrança de computação, mas mantém a cobrança dos discos.',
+  documentationUrl: 'https://learn.microsoft.com/azure/virtual-machines/states-billing',
+};
+
+/** Fallback used when the service has no documented entry in the table above. */
+const GENERIC_RATIONALE: BillingRationale = {
+  billingModel: 'Modelo de cobrança específico deste serviço não mapeado nesta versão.',
+  whySaves: 'Revise a utilização e o tier contratado antes de agir; confirme o modelo de cobrança na documentação do serviço.',
+  documentationUrl: 'https://learn.microsoft.com/azure/cost-management-billing/costs/cost-analysis-common-uses',
 };
 
 /**
@@ -18,7 +101,7 @@ export class OptimizerService {
    */
   public async generateRecommendations(idleResources: IdleResource[]): Promise<Recommendation[]> {
     const recommendations = idleResources.map((idleResource) => {
-      const actionType = this.pickActionType(idleResource.resource.type, idleResource.reason);
+      const { actionType, rationale } = this.resolveAction(idleResource.resource.type, idleResource.reason);
       const monthlySavings = this.resolveMonthlySavings(idleResource);
       const annualSavings = monthlySavings * 12;
       const risk = this.assessRisk(idleResource.resource, actionType);
@@ -30,7 +113,7 @@ export class OptimizerService {
         type: idleResource.resource.type,
         resourceId: idleResource.resource.id,
         title: `Otimizar ${idleResource.resource.name}`,
-        description: `${idleResource.reason}. ${this.actionDescription(actionType)} recupera aproximadamente ${monthlySavings.toFixed(2)} por mês.`,
+        description: this.buildDescription(idleResource.reason, actionType, monthlySavings),
         monthlySavings,
         annualSavings,
         risk,
@@ -41,6 +124,7 @@ export class OptimizerService {
         // Carrying the evidence forward keeps the recommendation auditable: the
         // reader can check the measurements and the price basis behind the figure.
         ...(idleResource.evidence ? { evidence: idleResource.evidence } : {}),
+        billingRationale: rationale,
       });
     });
 
@@ -85,13 +169,15 @@ export class OptimizerService {
   /**
    * Chooses the saving figure to publish for a finding.
    *
-   * When the detector resolved a real list price, that number is used verbatim.
-   * Passing it through the heuristic used to inflate it by up to 360 percent
-   * (a disk priced at 174.93 was published as 314.87), which silently undid the
-   * price lookup and overstated the headline savings of the whole report.
+   * A measured number is never passed through the heuristic. Doing so used to inflate
+   * list prices by up to 360 percent (a disk priced at 174.93 was published as 314.87),
+   * and it also resurrected savings for resources that had already been reconciled down
+   * to zero because their billing had stopped. Both cases publish a number the invoice
+   * contradicts, which is exactly what the estimate must never do.
    */
   private resolveMonthlySavings(idleResource: IdleResource): number {
-    if (idleResource.evidence?.savingsBasis === 'retail-price') {
+    const basis = idleResource.evidence?.savingsBasis;
+    if (basis === 'retail-price' || basis === 'observed-cost') {
       return Number(idleResource.estimatedMonthlySavings.toFixed(2));
     }
 
@@ -123,38 +209,53 @@ export class OptimizerService {
   }
 
   /**
+   * Writes the recommendation sentence.
+   *
+   * A finding reconciled down to zero must not read "recupera aproximadamente 0.00 por
+   * mês": there is nothing to recover, and stating otherwise reads as a defect to anyone
+   * reviewing the numbers. It is reported as a confirmation that the charge already ended.
+   */
+  private buildDescription(reason: string, actionType: ActionType, monthlySavings: number): string {
+    if (monthlySavings <= 0) {
+      return `${reason}. Não há economia futura a capturar: o recurso não gera custo no período mais recente. Mantido no relatório para registrar que a cobrança cessou.`;
+    }
+
+    return `${reason}. ${this.actionDescription(actionType)} recupera aproximadamente ${monthlySavings.toFixed(2)} por mês.`;
+  }
+
+  /**
    * Human-readable, Portuguese description of what each action does.
    */
   private actionDescription(actionType: ActionType): string {
     const descriptions: Record<ActionType, string> = {
       DELETE: 'Excluir o recurso',
-      DOWNSIZE: 'Reduzir o porte do recurso',
+      DOWNSIZE: 'Reduzir a capacidade provisionada',
       CHANGE_SKU: 'Alterar o SKU',
-      SCHEDULE: 'Agendar o desligamento fora do horário comercial',
+      SCHEDULE: 'Agendar a desalocação fora do horário comercial, que interrompe a cobrança de computação',
       MIGRATE: 'Migrar para um tier de menor custo',
       CLEANUP: 'Remover o recurso órfão',
     };
     return descriptions[actionType];
   }
 
-  private pickActionType(resourceType: string, reason = ''): ActionType {
-    if (resourceType.includes('disks') || resourceType.includes('publicIPAddresses')) {
-      return 'CLEANUP';
-    }
+  /**
+   * Resolves the action and the documented billing reason behind it.
+   *
+   * Action and rationale are chosen together on purpose: an action that cannot be
+   * justified by the service billing model has no business being recommended.
+   */
+  private resolveAction(resourceType: string, reason = ''): { actionType: ActionType; rationale: BillingRationale } {
     if (resourceType.includes('virtualMachines')) {
       // A VM that is already deallocated cannot be downsized into savings: what is
       // still being billed are the disks it holds.
-      return /desligada|deallocated/i.test(reason) ? 'CLEANUP' : 'DOWNSIZE';
+      return /desligada|deallocated/i.test(reason)
+        ? { actionType: 'CLEANUP', rationale: STOPPED_VM_RATIONALE }
+        : { actionType: 'DOWNSIZE', rationale: RUNNING_VM_RATIONALE };
     }
-    if (resourceType.includes('storageAccounts')) {
-      return 'DELETE';
-    }
-    if (resourceType.includes('sites')) {
-      return 'SCHEDULE';
-    }
-    if (resourceType.includes('Sql')) {
-      return 'CHANGE_SKU';
-    }
-    return 'MIGRATE';
+
+    const entry = BILLING_RATIONALES.find((candidate) => candidate.match(resourceType));
+    return entry
+      ? { actionType: entry.action, rationale: entry.rationale }
+      : { actionType: 'MIGRATE', rationale: GENERIC_RATIONALE };
   }
 }

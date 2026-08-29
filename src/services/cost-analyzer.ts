@@ -18,6 +18,18 @@ import { getRetryAfterMs, getStatusCode, isThrottlingError } from '@/utils/retry
 type CostGroupBy = 'service' | 'resource-group' | 'location' | 'tags';
 
 /**
+ * Actual billed cost per resource, broken down by calendar month. Resource IDs are
+ * stored lowercased so lookups are immune to the casing differences between the
+ * billing and the management APIs.
+ */
+export type ResourceCostLedger = {
+  currency: string;
+  /** Every month covered by the query, sorted ascending, as YYYY-MM. */
+  months: string[];
+  resources: Record<string, Record<string, number>>;
+};
+
+/**
  * Marks a dimension that was not part of the query grouping, so it can be dropped
  * from the summary instead of being reported as a real cost bucket.
  */
@@ -156,6 +168,140 @@ export class CostAnalyzerService {
       this.logger.error('Azure cost query failed', { error: error instanceof Error ? error.message : 'unknown' });
       throw new AzureApiError(describeCostQueryFailure(error), getStatusCode(error) ?? 500, error);
     }
+  }
+
+  /**
+   * Returns what each resource actually cost, month by month, for the analyzed period.
+   *
+   * The idle detectors reason about utilization and list prices, which is a projection.
+   * This is the invoice. Without it the report claims savings on resources that are
+   * billed at zero, such as an App Service on the F1 Free tier, and a single wrong
+   * number of that kind is enough for an executive audience to discard the whole report.
+   */
+  public async queryResourceCosts(
+    subscriptionId: string,
+    startDate: string,
+    endDate: string,
+  ): Promise<ResourceCostLedger> {
+    const cacheKey = `${subscriptionId}:${startDate}:${endDate}:resource-monthly`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      return cached as ResourceCostLedger;
+    }
+
+    const scope = `/subscriptions/${subscriptionId}`;
+    const client = new CostManagementClient(
+      this.azureClient.getCredential(),
+    ) as unknown as CostQueryClient;
+
+    const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
+
+    try {
+      const result = await this.azureClient.executeWithRetry(
+        async () => {
+          await this.qpuLimiter.acquire(qpuCost);
+          try {
+            return await client.query.usage(scope, {
+              type: 'ActualCost',
+              timeframe: 'Custom',
+              timePeriod: {
+                from: new Date(startDate),
+                to: new Date(endDate),
+              },
+              dataset: {
+                // Monthly granularity is what makes "it used to cost and no longer
+                // does" visible. Daily would multiply the payload for no extra insight.
+                granularity: 'Monthly',
+                aggregation: {
+                  totalCost: {
+                    name: 'PreTaxCost',
+                    function: 'Sum',
+                  },
+                },
+                grouping: [{ type: 'Dimension', name: 'ResourceId' }],
+              },
+            });
+          } catch (error: unknown) {
+            if (isThrottlingError(error)) {
+              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
+            }
+            throw error;
+          }
+        },
+        { maxAttempts: 8, maxDelayMs: 120_000 },
+      );
+
+      const ledger = this.toResourceLedger(result);
+      this.cache.set(cacheKey, ledger);
+      return ledger;
+    } catch (error: unknown) {
+      this.logger.error('Azure per-resource cost query failed', {
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      throw new AzureApiError(describeCostQueryFailure(error), getStatusCode(error) ?? 500, error);
+    }
+  }
+
+  /**
+   * Folds the grouped rows into a per-resource, per-month ledger. Resource IDs are
+   * lowercased because Azure is inconsistent about their casing between the billing
+   * and the management APIs, and a casing mismatch would look like a missing charge.
+   */
+  private toResourceLedger(result: QueryResult): ResourceCostLedger {
+    const columns = (result.columns ?? []).map((column) => column.name ?? '');
+    const rows = result.rows ?? [];
+    const resources: Record<string, Record<string, number>> = {};
+    const months = new Set<string>();
+    let currency = 'USD';
+
+    for (const row of rows) {
+      const resourceId = this.readColumn(row, columns, ['ResourceId']);
+      if (!resourceId) {
+        // Subscription-level charges carry no resource ID and cannot be reconciled
+        // against a specific finding.
+        continue;
+      }
+
+      const month = this.readMonth(row, columns);
+      if (!month) {
+        continue;
+      }
+
+      const amount = Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']) ?? 0);
+      if (!Number.isFinite(amount)) {
+        continue;
+      }
+
+      currency = this.readColumn(row, columns, ['Currency', 'BillingCurrency']) ?? currency;
+      months.add(month);
+
+      const bucket = (resources[resourceId.toLowerCase()] ??= {});
+      bucket[month] = (bucket[month] ?? 0) + amount;
+    }
+
+    return {
+      currency,
+      months: [...months].sort(),
+      resources,
+    };
+  }
+
+  /**
+   * Normalizes the period column to YYYY-MM. Cost Management returns it either as an
+   * ISO timestamp or as the numeric form YYYYMMDD depending on the granularity.
+   */
+  private readMonth(row: unknown[], columns: string[]): string | undefined {
+    const raw = this.readColumn(row, columns, ['UsageDate', 'BillingMonth', 'Date']);
+    if (!raw) {
+      return undefined;
+    }
+
+    if (/^\d{8}$/.test(raw)) {
+      return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
+    }
+
+    const parsed = new Date(raw);
+    return Number.isNaN(parsed.getTime()) ? undefined : formatMonth(parsed);
   }
 
   /**

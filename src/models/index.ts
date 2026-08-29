@@ -97,6 +97,27 @@ export const EvidenceMetricSchema = z.object({
  * application team can dismiss; with it, the claim carries the measurements, the
  * observation window and the basis of the savings figure.
  */
+/**
+ * What the resource actually cost according to Cost Management, month by month.
+ *
+ * A savings estimate derived from list prices is a projection; this is the invoice.
+ * Without it the report can claim savings on a resource that is billed at zero, such
+ * as an App Service on the F1 Free tier, which destroys its credibility with finance.
+ */
+export const BilledCostSchema = z.object({
+  /** Total actually billed for the resource across the analyzed period. */
+  observedTotal: costAmount,
+  currency: z.string().min(1),
+  /** Cost per calendar month, keyed as YYYY-MM. */
+  monthly: z.record(z.string(), costAmount),
+  /** Most recent month, as YYYY-MM, in which the resource was billed above zero. */
+  lastMonthWithCost: z.string().optional(),
+  /** Latest complete month covered by the cost query, as YYYY-MM. */
+  latestMonth: z.string().min(1),
+  /** True when the resource was billed earlier in the period but no longer is. */
+  billingStopped: z.boolean(),
+});
+
 export const EvidenceSchema = z.object({
   observationWindowDays: z.number().int().min(0),
   dataPoints: z.number().int().min(0),
@@ -106,6 +127,8 @@ export const EvidenceSchema = z.object({
   confidence: ConfidenceSchema,
   /** Why the confidence is not high, when applicable. */
   caveat: z.string().optional(),
+  /** Reconciliation against the actual invoice, when cost data could be retrieved. */
+  billed: BilledCostSchema.optional(),
 });
 
 export const IdleResourceSchema = z.object({
@@ -126,6 +149,25 @@ export const ActionTypeSchema = z.enum([
   'CLEANUP',
 ]);
 
+/**
+ * The documented reason an action reduces cost for a given service.
+ *
+ * Azure billing models differ in ways that invalidate otherwise sensible advice: a
+ * stopped VM stops compute charges, whereas a stopped App Service keeps billing
+ * because its plan continues to reserve the VM instances. Every action must be able
+ * to point at the documentation that backs it.
+ */
+export const BillingRationaleSchema = z.object({
+  /** How the service is billed, in one sentence. */
+  billingModel: z.string().min(1),
+  /** Why the recommended action changes that bill. */
+  whySaves: z.string().min(1),
+  /** Official Microsoft Learn URL supporting the statement. */
+  documentationUrl: z.string().url(),
+  /** Actions explicitly ruled out for this service, and why. */
+  notApplicable: z.string().optional(),
+});
+
 export const RecommendationSchema = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
@@ -140,6 +182,13 @@ export const RecommendationSchema = z.object({
   actionType: ActionTypeSchema,
   status: z.enum(['new', 'planned', 'in-progress', 'completed', 'dismissed']),
   evidence: EvidenceSchema.optional(),
+  /**
+   * Why this action actually reduces the bill for this service, plus the official
+   * documentation that states it. A suggestion that sounds reasonable but does not
+   * hold for the service billing model, such as scheduling an App Service shutdown,
+   * costs more credibility than the money it claims to save.
+   */
+  billingRationale: BillingRationaleSchema.optional(),
 });
 
 /**
@@ -324,6 +373,8 @@ export type ResourceMetric = z.infer<typeof ResourceMetricSchema>;
 export type SavingsBasis = z.infer<typeof SavingsBasisSchema>;
 export type Confidence = z.infer<typeof ConfidenceSchema>;
 export type EvidenceMetric = z.infer<typeof EvidenceMetricSchema>;
+export type BilledCost = z.infer<typeof BilledCostSchema>;
+export type BillingRationale = z.infer<typeof BillingRationaleSchema>;
 export type Evidence = z.infer<typeof EvidenceSchema>;
 export type IdleResource = z.infer<typeof IdleResourceSchema>;
 export type Recommendation = z.infer<typeof RecommendationSchema>;

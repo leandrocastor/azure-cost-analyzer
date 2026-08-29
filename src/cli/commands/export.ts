@@ -8,6 +8,7 @@ import { generateStaticReport } from '@/dashboard/report';
 import type { CostDiff, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
+import { CostReconciliationService } from '@/services/cost-reconciliation';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
@@ -185,14 +186,46 @@ export default class ExportCommand extends Command {
 
         spinner.text = `Detecting idle resources for ${progress}`;
         const resourceDetector = new ResourceDetectorService(azureClient, subscription.id, pricingService);
+        let subscriptionFindings: IdleResource[] = [];
         try {
-          idleResources.push(...(await resourceDetector.detectAll()));
+          subscriptionFindings = await resourceDetector.detectAll();
           analyzed = true;
         } catch (error: unknown) {
           warnings.push(
             `Detecção de recursos ociosos indisponível para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
           );
         }
+
+        // Detection reasons about utilization and list prices, which is a projection of
+        // what a resource would cost. Cost Management knows what it did cost. Claiming a
+        // saving on something billed at zero, such as an App Service on the F1 Free tier,
+        // is what makes a finance audience discard the entire report.
+        if (subscriptionFindings.length > 0) {
+          spinner.text = `Reconciling findings against billed cost for ${progress}`;
+          try {
+            const ledger = await costAnalyzer.queryResourceCosts(
+              subscription.id,
+              startDate.toISOString().slice(0, 10),
+              endDate.toISOString().slice(0, 10),
+            );
+            const reconciliation = new CostReconciliationService().reconcile(subscriptionFindings, ledger);
+            subscriptionFindings = reconciliation.idleResources;
+
+            if (reconciliation.discarded.length > 0) {
+              warnings.push(
+                `${reconciliation.discarded.length} recurso(s) de "${subscription.displayName}" foram descartados por não gerarem custo faturado: ${reconciliation.discarded
+                  .map((item) => item.name)
+                  .join(', ')}.`,
+              );
+            }
+          } catch (error: unknown) {
+            warnings.push(
+              `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
+            );
+          }
+        }
+
+        idleResources.push(...subscriptionFindings);
 
         // The inventory only feeds governance checks, so a failure here must not
         // discard the detection results that were already gathered successfully.

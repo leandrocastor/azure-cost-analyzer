@@ -1,3 +1,4 @@
+import type { IdleResource } from '@/models';
 import { OptimizerService } from '@/services/optimizer';
 import { mockIdleResources, mockResource } from '../fixtures/mock-data';
 
@@ -134,6 +135,107 @@ describe('OptimizerService', () => {
 
       // Downsizing a machine that is already off saves nothing.
       expect(recommendation?.actionType).toBe('CLEANUP');
+    });
+  });
+  describe('billing rationale', () => {
+    const buildIdle = (type: string, name: string, reason = 'Baixa utilização'): IdleResource => ({
+      resource: {
+        id: `/subscriptions/sub/resourceGroups/rg/providers/${type}/${name}`,
+        name,
+        type,
+        resourceGroup: 'rg',
+        location: 'brazilsouth',
+        sku: 'Standard',
+        tags: {},
+        status: 'Succeeded',
+      },
+      reason,
+      idleScore: 80,
+      estimatedMonthlySavings: 100,
+      metrics: [],
+    });
+
+    it('never suggests scheduling an App Service shutdown, which does not reduce the bill', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        buildIdle('Microsoft.Web/sites', 'app-a'),
+      ]);
+
+      expect(recommendation?.actionType).not.toBe('SCHEDULE');
+      expect(recommendation?.actionType).toBe('DOWNSIZE');
+      expect(recommendation?.billingRationale?.notApplicable).toContain('não gera economia');
+      expect(recommendation?.billingRationale?.billingModel).toContain('App Service Plan');
+    });
+
+    it('backs every recommendation with official documentation', async () => {
+      const recommendations = await new OptimizerService().generateRecommendations([
+        buildIdle('Microsoft.Compute/virtualMachines', 'vm-a'),
+        buildIdle('Microsoft.Compute/disks', 'disk-a'),
+        buildIdle('Microsoft.Web/sites', 'app-a'),
+        buildIdle('Microsoft.Sql/servers/databases', 'db-a'),
+        buildIdle('Microsoft.Storage/storageAccounts', 'st-a'),
+        buildIdle('Microsoft.Network/publicIPAddresses', 'ip-a'),
+      ]);
+
+      expect(recommendations).toHaveLength(6);
+      for (const recommendation of recommendations) {
+        expect(recommendation.billingRationale?.documentationUrl).toMatch(/^https:\/\/learn\.microsoft\.com\//);
+        expect(recommendation.billingRationale?.whySaves.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('explains that a stopped VM still bills for its disks', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        buildIdle('Microsoft.Compute/virtualMachines', 'vm-parada', 'VM desligada (deallocated), mas os discos continuam sendo cobrados'),
+      ]);
+
+      expect(recommendation?.actionType).toBe('CLEANUP');
+      expect(recommendation?.billingRationale?.billingModel).toContain('desalocada');
+    });
+  });
+  describe('savings fidelity against the invoice', () => {
+    const withBasis = (
+      basis: 'retail-price' | 'observed-cost' | 'heuristic',
+      savings: number,
+    ): IdleResource => ({
+      resource: {
+        id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/sites/app-a',
+        name: 'app-a',
+        type: 'Microsoft.Web/sites',
+        resourceGroup: 'rg',
+        location: 'brazilsouth',
+        sku: 'Standard',
+        tags: {},
+        status: 'Succeeded',
+      },
+      reason: 'Baixa utilização',
+      idleScore: 70,
+      estimatedMonthlySavings: savings,
+      metrics: [],
+      evidence: {
+        observationWindowDays: 7,
+        dataPoints: 168,
+        metrics: [],
+        savingsBasis: basis,
+        savingsBasisDetail: 'detalhe',
+        confidence: 'high',
+      },
+    });
+
+    it('never resurrects savings for a resource whose billing already stopped', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        withBasis('observed-cost', 0),
+      ]);
+
+      expect(recommendation?.monthlySavings).toBe(0);
+      expect(recommendation?.annualSavings).toBe(0);
+    });
+
+    it('publishes the reconciled cost verbatim instead of re-inflating it', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        withBasis('observed-cost', 88.4),
+      ]);
+
+      expect(recommendation?.monthlySavings).toBe(88.4);
     });
   });
 });

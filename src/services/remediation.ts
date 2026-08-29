@@ -185,7 +185,7 @@ export class RemediationService {
       DELETE: `Excluir o recurso ${name}, que não apresenta utilização relevante.`,
       DOWNSIZE: `Reduzir o porte de ${name} para um SKU menor compatível com a demanda observada.`,
       CHANGE_SKU: `Migrar ${name} para um SKU/tier de menor custo.`,
-      SCHEDULE: `Desligar ${name} fora do horário comercial por meio de agendamento.`,
+      SCHEDULE: `Agendar a desalocação de ${name} fora do horário comercial, interrompendo a cobrança de computação.`,
       MIGRATE: `Migrar ${name} para uma opção de menor custo (tier serverless ou consumo).`,
       CLEANUP: `Remover ${name}, um recurso órfão que continua sendo cobrado.`,
     };
@@ -236,6 +236,7 @@ export class RemediationService {
     const name = shellQuote(coordinates.name);
     const subscription = shellQuote(coordinates.subscriptionId);
     const isVirtualMachine = coordinates.resourceType.toLowerCase() === 'virtualmachines';
+    const isAppService = coordinates.resourceType.toLowerCase() === 'sites';
 
     const backup = step(
       'Salva o estado atual do recurso para permitir rollback',
@@ -251,25 +252,48 @@ export class RemediationService {
         ];
 
       case 'DOWNSIZE':
-        return isVirtualMachine
-          ? [
-              backup,
-              step(
-                'Lista os tamanhos compatíveis para escolher o novo SKU',
-                `az vm list-vm-resize-options --ids ${id} --query "[].name" -o tsv | head -20`,
-              ),
-              step(
-                'Aplica o novo tamanho (ajuste NOVO_SKU antes de executar)',
-                `az vm resize --ids ${id} --size "\${NOVO_SKU:-Standard_B2s}"`,
-              ),
-            ]
-          : [
-              backup,
-              step(
-                'Reduz o porte do plano/serviço (ajuste NOVO_SKU antes de executar)',
-                `az resource update --ids ${id} --set sku.name="\${NOVO_SKU:-B1}"`,
-              ),
-            ];
+        if (isVirtualMachine) {
+          return [
+            backup,
+            step(
+              'Lista os tamanhos compatíveis para escolher o novo SKU',
+              `az vm list-vm-resize-options --ids ${id} --query "[].name" -o tsv | head -20`,
+            ),
+            step(
+              'Aplica o novo tamanho (ajuste NOVO_SKU antes de executar)',
+              `az vm resize --ids ${id} --size "\${NOVO_SKU:-Standard_B2s}"`,
+            ),
+          ];
+        }
+
+        // O custo do App Service está no App Service Plan, que reserva instâncias de VM.
+        // Alterar o SKU do site não existe como operação e não reduziria a fatura: o
+        // que precisa ser redimensionado é o plano ao qual o site pertence.
+        if (isAppService) {
+          return [
+            backup,
+            step(
+              'Identifica o App Service Plan que gera a cobrança deste site',
+              `az webapp show --subscription ${subscription} --resource-group ${group} --name ${name} --query serverFarmId -o tsv`,
+            ),
+            step(
+              'Verifica quantos aplicativos compartilham o plano antes de redimensioná-lo',
+              `az appservice plan show --ids "$(az webapp show --subscription ${subscription} --resource-group ${group} --name ${name} --query serverFarmId -o tsv)" --query "{sku:sku.name, apps:numberOfSites, workers:sku.capacity}" -o jsonc`,
+            ),
+            step(
+              'Reduz o tier do plano (ajuste NOVO_SKU antes de executar)',
+              `az appservice plan update --ids "$(az webapp show --subscription ${subscription} --resource-group ${group} --name ${name} --query serverFarmId -o tsv)" --sku "\${NOVO_SKU:-B1}"`,
+            ),
+          ];
+        }
+
+        return [
+          backup,
+          step(
+            'Reduz a capacidade provisionada (ajuste NOVO_SKU antes de executar)',
+            `az resource update --ids ${id} --set sku.name="\${NOVO_SKU:-B1}"`,
+          ),
+        ];
 
       case 'CHANGE_SKU':
         return [
@@ -281,6 +305,10 @@ export class RemediationService {
         ];
 
       case 'SCHEDULE':
+        // Agendamento só reduz custo onde parar o recurso interrompe a cobrança, o que
+        // vale para a desalocação de uma VM. Para serviços cobrados por capacidade
+        // reservada, como o App Service, parar o recurso não altera a fatura, então
+        // nenhum comando é emitido em vez de sugerir uma ação sem efeito financeiro.
         return isVirtualMachine
           ? [
               step(
@@ -290,8 +318,8 @@ export class RemediationService {
             ]
           : [
               step(
-                'Para o serviço fora do horário comercial (agende via automação ou cron)',
-                `az webapp stop --subscription ${subscription} --resource-group ${group} --name ${name}`,
+                'Revise o modelo de cobrança antes de agendar: parar este recurso não interrompe a cobrança de capacidade reservada',
+                `az resource show --ids ${id} -o jsonc`,
               ),
             ];
 

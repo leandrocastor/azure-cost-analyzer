@@ -227,6 +227,35 @@ A FinOps report is only useful when every finding survives pushback from the inf
 
 Savings are equally faithful: when a retail price is resolved it is used **verbatim**, with no multipliers or artificial floors inflating the figures.
 
+#### Reconciliation against the actual invoice
+
+Idle detection reasons about utilization and list prices, which is a **projection** of what a resource would cost. Cost Management knows what it **actually cost**. When the two disagree, the invoice wins:
+
+| Situation on the invoice | What the report does |
+| --- | --- |
+| Resource was never billed in the period | The finding is **dropped**. This is the case for an App Service on the F1 Free tier: there is nothing to save |
+| Resource was billed before but stopped | The finding is **kept and stated explicitly**: "no charges since May 2026, when it cost R$ 210.50". Savings drop to zero, because there is nothing left to recover |
+| Resource is still billed | The estimate is **capped at the amount actually billed** in the most recent month. No action can save more than the resource costs |
+| Resource absent from cost data | The estimate is kept but flagged as **not confirmed by the invoice**, with reduced confidence |
+
+Every finding shows its month-by-month cost, so the trend is visible instead of hidden behind a single estimated figure.
+
+#### Documented basis for every recommendation
+
+A plausible suggestion can simply be wrong for a service billing model. Every recommendation carries the billing model, why the action reduces the bill, and a link to official Microsoft documentation.
+
+The clearest example is **App Service**: scheduling a shutdown outside business hours **saves nothing**. The documentation states that plans keep incurring charges because they continue to reserve the configured VM instances ([Delete an App Service plan](https://learn.microsoft.com/azure/app-service/app-service-plan-manage#delete-an-app-service-plan)). Real savings come from scaling the plan down, consolidating apps, or moving to the Free tier — and that is what the remediation script does, acting on the App Service Plan rather than on the site.
+
+| Service | Recommended action | Rejected action |
+| --- | --- | --- |
+| Running Virtual Machines | Resize down | — |
+| Deallocated Virtual Machines | Remove the VM and its retained disks | Stop it (compute is no longer billed) |
+| Managed Disks | Delete the disk | Detach it (billing follows provisioned size) |
+| Public IP | Delete the address | Dissociate it (billed for existing) |
+| App Service | Scale the plan down or consolidate | Schedule a shutdown (the plan stays reserved) |
+| Azure SQL | Lower the tier or adopt Serverless | — |
+| Storage | Move to Cool/Archive tiers | — |
+
 #### Well-Architected Framework scorecard
 
 The report assigns a 0 to 100 score to the **Cost Optimization** pillar, assessing eight controls: waste ratio, orphaned resources, owner tagging, environment tagging, rightsizing, cost visibility, spend concentration, and recommendation actionability. Controls that cannot be measured in the environment are excluded from the calculation instead of silently lowering the score.
