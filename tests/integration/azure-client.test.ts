@@ -5,8 +5,10 @@ import {
 } from '@azure/identity';
 
 import { AzureClientService } from '@/services/azure-client';
-import { AzureApiError, AzureAuthError } from '@/utils/errors';
+import { AzureApiError, AzureAuthError, ConfigurationError } from '@/utils/errors';
 import { validEnv } from '../fixtures/mock-data';
+
+const listSubscriptionsMock = vi.fn();
 
 vi.mock('@azure/identity', () => ({
   DefaultAzureCredential: vi.fn(function () {
@@ -19,6 +21,20 @@ vi.mock('@azure/identity', () => ({
     return { kind: 'managed-identity' };
   }),
 }));
+
+vi.mock('@azure/arm-subscriptions', () => ({
+  SubscriptionClient: vi.fn(function () {
+    return { subscriptions: { list: listSubscriptionsMock } };
+  }),
+}));
+
+const asAsyncIterable = <T>(items: T[]): AsyncIterable<T> => ({
+  [Symbol.asyncIterator]: async function* () {
+    for (const item of items) {
+      yield item;
+    }
+  },
+});
 
 describe('AzureClientService', () => {
   beforeEach(() => {
@@ -69,6 +85,46 @@ describe('AzureClientService', () => {
   it('returns configured subscription id when no override is provided', () => {
     const service = new AzureClientService(validEnv);
     expect(service.getSubscriptionId()).toBe(validEnv.AZURE_SUBSCRIPTION_ID);
+  });
+
+  it('throws a configuration error when no subscription can be resolved', () => {
+    const service = new AzureClientService({ ...validEnv, AZURE_SUBSCRIPTION_ID: undefined });
+    expect(() => service.getSubscriptionId()).toThrow(ConfigurationError);
+  });
+
+  it('returns undefined from getConfiguredSubscriptionId when unset', () => {
+    const service = new AzureClientService({ ...validEnv, AZURE_SUBSCRIPTION_ID: undefined });
+    expect(service.getConfiguredSubscriptionId()).toBeUndefined();
+  });
+
+  it('lists enabled subscriptions accessible to the credential', async () => {
+    listSubscriptionsMock.mockReturnValueOnce(
+      asAsyncIterable([
+        { subscriptionId: 'sub-1', displayName: 'Production', state: 'Enabled' },
+        { subscriptionId: 'sub-2', displayName: 'Disabled Sub', state: 'Disabled' },
+        { subscriptionId: 'sub-3', displayName: 'Sandbox', state: 'Enabled' },
+      ]),
+    );
+    const service = new AzureClientService(validEnv);
+    const subscriptions = await service.listAccessibleSubscriptions();
+    expect(subscriptions).toEqual([
+      { id: 'sub-1', displayName: 'Production' },
+      { id: 'sub-3', displayName: 'Sandbox' },
+    ]);
+  });
+
+  it('throws when no enabled subscriptions are found', async () => {
+    listSubscriptionsMock.mockReturnValueOnce(asAsyncIterable([]));
+    const service = new AzureClientService(validEnv);
+    await expect(service.listAccessibleSubscriptions()).rejects.toThrow(AzureAuthError);
+  });
+
+  it('wraps subscription listing failures', async () => {
+    listSubscriptionsMock.mockImplementationOnce(() => {
+      throw new Error('network error');
+    });
+    const service = new AzureClientService(validEnv);
+    await expect(service.listAccessibleSubscriptions()).rejects.toThrow(AzureAuthError);
   });
 
   it('wraps credential creation errors', () => {

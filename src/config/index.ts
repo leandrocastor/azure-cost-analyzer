@@ -9,7 +9,7 @@ const logLevelSchema = z.enum(['error', 'warn', 'info', 'debug']);
 const logFormatSchema = z.enum(['auto', 'json', 'text']);
 
 const baseConfigSchema = z.object({
-  AZURE_SUBSCRIPTION_ID: z.string().uuid(),
+  AZURE_SUBSCRIPTION_ID: z.string().uuid().optional(),
   AZURE_TENANT_ID: z.string().uuid().optional(),
   AZURE_CLIENT_ID: z.string().uuid().optional(),
   AZURE_CLIENT_SECRET: z.string().min(1).optional(),

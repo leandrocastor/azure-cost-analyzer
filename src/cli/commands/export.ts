@@ -5,7 +5,8 @@ import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import { AzureClientService } from '@/services/azure-client';
+import type { CostSummary } from '@/models';
+import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
 import { OptimizerService } from '@/services/optimizer';
 import { ResourceDetectorService } from '@/services/resource-detector';
@@ -19,15 +20,70 @@ const defaultOutputPath = (): string => {
 };
 
 /**
+ * Resolves which subscriptions the report should cover. When an explicit
+ * subscription is given (flag or environment), only that one is analyzed.
+ * Otherwise every enabled subscription the authenticated identity can access
+ * in its tenant(s) is discovered and analyzed, so the command works out of
+ * the box in Azure Cloud Shell without any prior configuration.
+ */
+const resolveSubscriptions = async (
+  azureClient: AzureClientService,
+  explicitSubscription?: string,
+): Promise<AccessibleSubscription[]> => {
+  if (explicitSubscription) {
+    return [{ id: explicitSubscription, displayName: explicitSubscription }];
+  }
+
+  const configured = azureClient.getConfiguredSubscriptionId();
+  if (configured) {
+    return [{ id: configured, displayName: configured }];
+  }
+
+  return azureClient.listAccessibleSubscriptions();
+};
+
+const addBucket = (target: Record<string, number>, source: Record<string, number>): void => {
+  for (const [key, value] of Object.entries(source)) {
+    target[key] = (target[key] ?? 0) + value;
+  }
+};
+
+/**
+ * Merges per-subscription cost summaries into a single tenant-wide summary.
+ */
+const mergeCostSummaries = (summaries: CostSummary[]): CostSummary => {
+  const merged: CostSummary = {
+    period: summaries[0]?.period ?? '',
+    totalAmount: 0,
+    currency: summaries[0]?.currency ?? 'USD',
+    byService: {},
+    byResourceGroup: {},
+    byLocation: {},
+  };
+
+  for (const summary of summaries) {
+    merged.totalAmount += summary.totalAmount;
+    addBucket(merged.byService, summary.byService);
+    addBucket(merged.byResourceGroup, summary.byResourceGroup);
+    addBucket(merged.byLocation, summary.byLocation);
+  }
+
+  return merged;
+};
+
+/**
  * Generates a static, self-contained HTML report (same visual design as the live
  * dashboard) that can be opened offline in a browser or hosted as a static site.
  */
 export default class ExportCommand extends Command {
   public static override description =
-    'Export a static HTML report with costs, idle resources, and recommendations. Works standalone (no server) and is ideal for Azure Cloud Shell.';
+    'Export a static HTML report with costs, idle resources, and recommendations. Works standalone (no server) and is ideal for Azure Cloud Shell. When --subscription is omitted, every subscription the authenticated identity can access in its tenant is analyzed.';
 
   public static override flags = {
-    subscription: Flags.string({ char: 's', description: 'Azure subscription id override' }),
+    subscription: Flags.string({
+      char: 's',
+      description: 'Azure subscription id override. When omitted, all accessible subscriptions are analyzed.',
+    }),
     period: Flags.integer({
       char: 'p',
       description: 'Trailing months to analyze',
@@ -43,13 +99,12 @@ export default class ExportCommand extends Command {
    */
   public async run(): Promise<void> {
     const { flags } = await this.parse(ExportCommand);
-    const spinner = ora('Generating Azure cost report...').start();
+    const spinner = ora('Discovering accessible Azure subscriptions...').start();
 
     try {
       const azureClient = new AzureClientService();
-      const subscriptionId = azureClient.getSubscriptionId(flags.subscription);
+      const subscriptions = await resolveSubscriptions(azureClient, flags.subscription);
       const costAnalyzer = new CostAnalyzerService(azureClient);
-      const resourceDetector = new ResourceDetectorService(azureClient, subscriptionId);
       const optimizer = new OptimizerService();
 
       const endDate = new Date();
@@ -57,20 +112,38 @@ export default class ExportCommand extends Command {
         Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() - (flags.period - 1), 1),
       );
 
-      const [costs, idleResources] = await Promise.all([
-        costAnalyzer.queryCosts(
-          subscriptionId,
-          startDate.toISOString().slice(0, 10),
-          endDate.toISOString().slice(0, 10),
-          'service',
-        ),
-        resourceDetector.detectAll(),
-      ]);
+      const perSubscriptionCosts: CostSummary[] = [];
+      const idleResources = [];
+
+      for (const [index, subscription] of subscriptions.entries()) {
+        spinner.text = `Analyzing subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
+        const resourceDetector = new ResourceDetectorService(azureClient, subscription.id);
+
+        const [costs, detected] = await Promise.all([
+          costAnalyzer.queryCosts(
+            subscription.id,
+            startDate.toISOString().slice(0, 10),
+            endDate.toISOString().slice(0, 10),
+            'service',
+          ),
+          resourceDetector.detectAll(),
+        ]);
+
+        perSubscriptionCosts.push(costs);
+        idleResources.push(...detected);
+      }
+
+      spinner.text = 'Generating recommendations and rendering report...';
       const recommendations = await optimizer.generateRecommendations(idleResources);
+      const costs = mergeCostSummaries(perSubscriptionCosts);
+      const subscriptionLabel =
+        subscriptions.length === 1 && subscriptions[0]
+          ? subscriptions[0].id
+          : `${subscriptions.length} subscriptions: ${subscriptions.map((subscription) => subscription.displayName).join(', ')}`;
 
       const html = generateStaticReport({
         generatedAt: new Date().toISOString(),
-        subscriptionId,
+        subscriptionId: subscriptionLabel,
         costs,
         idleResources,
         recommendations,
@@ -79,7 +152,9 @@ export default class ExportCommand extends Command {
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());
       await writeFile(outputPath, html, 'utf8');
 
-      spinner.succeed(`Report generated at ${outputPath}`);
+      spinner.succeed(
+        `Report generated at ${outputPath} (${subscriptions.length} subscription${subscriptions.length === 1 ? '' : 's'} analyzed)`,
+      );
       this.log('Open it directly in a browser, or host the file as-is (Azure Storage static website, App Service, etc.).');
     } catch (error: unknown) {
       spinner.fail(error instanceof Error ? error.message : 'Report generation failed');
@@ -87,3 +162,4 @@ export default class ExportCommand extends Command {
     }
   }
 }
+

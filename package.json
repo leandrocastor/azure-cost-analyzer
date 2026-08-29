@@ -37,6 +37,7 @@
     "@azure/arm-network": "latest",
     "@azure/arm-sql": "latest",
     "@azure/arm-storage": "latest",
+    "@azure/arm-subscriptions": "^5.1.0",
     "@azure/identity": "latest",
     "@oclif/core": "latest",
     "@oclif/plugin-help": "latest",

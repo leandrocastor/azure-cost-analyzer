@@ -17,6 +17,12 @@ describe('config', () => {
     expect(config.DASHBOARD_PORT).toBe(3000);
   });
 
+  it('loads successfully without AZURE_SUBSCRIPTION_ID (tenant-wide discovery mode)', () => {
+    const env = { ...validEnv, AZURE_SUBSCRIPTION_ID: undefined };
+    const config = loadConfig(env);
+    expect(config.AZURE_SUBSCRIPTION_ID).toBeUndefined();
+  });
+
   it('caches configuration via getConfig', () => {
     process.env = { ...process.env, ...validEnv };
     const first = getConfig();
