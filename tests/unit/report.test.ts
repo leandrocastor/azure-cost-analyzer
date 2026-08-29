@@ -3,7 +3,7 @@ import type { CostDiff } from '@/models';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
 import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
-import { generateStaticReport } from '@/dashboard/report';
+import { REPORT_CLIENT_SCRIPT, generateStaticReport } from '@/dashboard/report';
 import { mockCostSummary, mockIdleResources, mockRecommendations } from '../fixtures/mock-data';
 
 describe('generateStaticReport', () => {
@@ -148,11 +148,9 @@ describe('generateStaticReport — seções de diferenciação', () => {
   });
 
   it('produces syntactically valid inline JavaScript', () => {
-    const html = generateStaticReport(fullData);
-    const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1] ?? '';
-
-    expect(script.length).toBeGreaterThan(0);
+    expect(REPORT_CLIENT_SCRIPT.length).toBeGreaterThan(0);
+    expect(generateStaticReport(fullData)).toContain(REPORT_CLIENT_SCRIPT);
     // Compiling the source surfaces syntax errors without executing any of it.
-    expect(() => new Script(script)).not.toThrow();
+    expect(() => new Script(REPORT_CLIENT_SCRIPT)).not.toThrow();
   });
 });
