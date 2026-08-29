@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 import { z } from 'zod';
 
 import { ConfigurationError } from '@/utils/errors';
