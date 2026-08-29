@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { validEnv, mockCostSummary, mockIdleResources, mockRecommendations } from '../fixtures/mock-data';
@@ -78,6 +78,7 @@ import RecommendCommand from '@/cli/commands/recommend';
 
 const outputPath = path.resolve(__dirname, '../fixtures/cost-command-output.csv');
 const reportOutputPath = path.resolve(__dirname, '../fixtures/report-command-output.html');
+const remediationScriptPath = path.resolve(__dirname, '../fixtures/apply-remediation.sh');
 
 describe('CLI command classes', () => {
   beforeEach(() => {
@@ -117,6 +118,9 @@ describe('CLI command classes', () => {
     if (existsSync(reportOutputPath)) {
       unlinkSync(reportOutputPath);
     }
+    if (existsSync(remediationScriptPath)) {
+      unlinkSync(remediationScriptPath);
+    }
   });
 
   afterAll(() => {
@@ -125,6 +129,9 @@ describe('CLI command classes', () => {
     }
     if (existsSync(reportOutputPath)) {
       unlinkSync(reportOutputPath);
+    }
+    if (existsSync(remediationScriptPath)) {
+      unlinkSync(remediationScriptPath);
     }
   });
 
@@ -276,6 +283,73 @@ describe('CLI command classes', () => {
 
     const html = readFileSync(reportOutputPath, 'utf8');
     expect(html).toContain('Too many requests. Please retry.');
+    warnSpy.mockRestore();
+  });
+
+  it('writes an executable remediation script alongside the report', async () => {
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+
+    expect(existsSync(remediationScriptPath)).toBe(true);
+    const script = readFileSync(remediationScriptPath, 'utf8');
+    expect(script.startsWith('#!/usr/bin/env bash')).toBe(true);
+    expect(script).toContain('APPLY="${APPLY:-false}"');
+
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('"remediationPlans"');
+    expect(html).toContain('Plano de Remediação');
+  });
+
+  it('skips the remediation plan when --no-remediation is passed', async () => {
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3', '--no-remediation']);
+
+    expect(existsSync(remediationScriptPath)).toBe(false);
+    expect(readFileSync(reportOutputPath, 'utf8')).toContain('"remediationPlans":[]');
+  });
+
+  it('embeds the executive summary and the ownership breakdown', async () => {
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+    const html = readFileSync(reportOutputPath, 'utf8');
+
+    expect(html).toContain('"executiveSummary"');
+    expect(html).toContain('"generatedBy":"heuristic"');
+    expect(html).toContain('"ownership"');
+    expect(html).toContain('Desperdício por Responsável');
+  });
+
+  it('attributes waste using the tag keys given by --owner-tags', async () => {
+    resourceDetectorMock.detectAll.mockResolvedValueOnce([
+      {
+        ...mockIdleResources[0],
+        resource: { ...mockIdleResources[0].resource, tags: { responsavel: 'time-infra' } },
+      },
+    ]);
+
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3', '--owner-tags', 'responsavel']);
+
+    expect(readFileSync(reportOutputPath, 'utf8')).toContain('"owner":"time-infra"');
+  });
+
+  it('compares against a previously generated report', async () => {
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+    const baseline = path.resolve(__dirname, '../fixtures/report-baseline.html');
+    writeFileSync(baseline, readFileSync(reportOutputPath, 'utf8'), 'utf8');
+
+    costAnalyzerMock.queryCosts.mockResolvedValueOnce({ ...mockCostSummary, totalAmount: 1305 });
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3', '--compare', baseline]);
+
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('"totalDelta":200');
+    expect(html).toContain('Comparativo com a Execução Anterior');
+    unlinkSync(baseline);
+  });
+
+  it('degrades to a warning when the comparison baseline cannot be read', async () => {
+    const warnSpy = vi.spyOn(ExportCommand.prototype, 'warn').mockImplementation(((message: string) => message) as never);
+
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3', '--compare', '/tmp/nope-123.html']);
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Comparativo indisponível'));
+    expect(existsSync(reportOutputPath)).toBe(true);
     warnSpy.mockRestore();
   });
 

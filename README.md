@@ -10,6 +10,10 @@ Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboa
 - Análise de tendência de custos, detecção de anomalias e previsão simples
 - Detecção de recursos ociosos para VMs, App Services, Storage, SQL, discos, IPs públicos e load balancers
 - Recomendações de otimização priorizadas com pontuação de ROI, risco e esforço
+- **Sumário executivo automático** em linguagem natural, no topo do relatório
+- **Plano de remediação executável**: comandos `az` prontos, com verificação prévia, rollback e trechos equivalentes em Terraform e Bicep, mais um script `apply-remediation.sh` que roda em modo simulação por padrão
+- **Comparativo entre execuções** (cost diff): o que mudou desde o último relatório e qual service ou resource group causou a variação
+- **Desperdício por responsável** (showback/chargeback): atribuição do desperdício via tags de owner/team/cost center, com indicador de cobertura de tags
 - API do dashboard em Express com placeholder de frontend estático
 - TypeScript estrito, validação com Zod, logging com Winston, cobertura com Vitest, ESLint e Prettier
 
@@ -117,9 +121,71 @@ Gera um relatório HTML estático, com o mesmo visual do dashboard, mas sem prec
 cost-analyzer export --period 3 --output ./azure-cost-report.html
 ```
 
-O arquivo gerado já contém os dados incorporados (custos, recursos ociosos e recomendações) e pode ser aberto diretamente no navegador ou hospedado em qualquer site estático (Azure Storage Static Website, App Service, etc.).
+O arquivo gerado já contém os dados incorporados (custos, recursos ociosos, recomendações, sumário executivo, desperdício por responsável e plano de remediação) e pode ser aberto diretamente no navegador ou hospedado em qualquer site estático (Azure Storage Static Website, App Service, etc.).
 
 Sem `--subscription`, todas as assinaturas habilitadas visíveis à identidade autenticada são analisadas e consolidadas no relatório. Para restringir a uma única assinatura, use `--subscription <id>`.
+
+#### Flags
+
+| Flag | Descrição |
+| --- | --- |
+| `--period`, `-p` | Meses retroativos a analisar (1 a 12, padrão 1) |
+| `--output`, `-o` | Caminho do arquivo HTML de saída |
+| `--subscription`, `-s` | Restringe a análise a uma única assinatura |
+| `--compare`, `-c` | Caminho de um relatório anterior (HTML ou JSON) para gerar o comparativo |
+| `--owner-tags` | Tags usadas para atribuir o desperdício a um responsável, separadas por vírgula |
+| `--no-remediation` | Não gera o plano de remediação nem o script `apply-remediation.sh` |
+
+#### Plano de remediação
+
+Junto ao HTML é gravado um `apply-remediation.sh` no mesmo diretório. Ele **não altera nada por padrão**: roda em modo simulação e apenas imprime os comandos.
+
+```bash
+# 1. Revise o que seria executado
+./apply-remediation.sh
+
+# 2. Execute de verdade
+APPLY=true ./apply-remediation.sh
+
+# 3. Ou aplique em um único recurso
+APPLY=true ONLY=vm-web01 ./apply-remediation.sh
+```
+
+Ações classificadas como risco alto exigem que o operador digite `CONFIRMO` antes de prosseguir. Cada bloco inclui os comandos de rollback como comentário.
+
+#### Comparativo entre execuções
+
+Guarde os relatórios gerados e compare-os para ver a evolução do ambiente:
+
+```bash
+cost-analyzer export --period 1 --output ./relatorio-agosto.html
+# ... um mês depois ...
+cost-analyzer export --period 1 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
+```
+
+O relatório passa a exibir a variação total, os maiores movimentos por service e por resource group, além dos recursos ociosos que surgiram ou foram resolvidos.
+
+#### Desperdício por responsável
+
+O desperdício é atribuído ao responsável a partir das tags do recurso (`owner`, `team`, `costCenter`, entre outras, sem diferenciar maiúsculas de minúsculas). Quando não há tag, o resource group é usado como fronteira de responsabilidade. Para usar uma convenção própria:
+
+```bash
+cost-analyzer export --owner-tags responsavel,centro-de-custo
+```
+
+O relatório também mostra a cobertura de tags de responsável, que é o principal indicador de maturidade para viabilizar cobrança interna.
+
+## Roadmap
+
+Próximos diferenciais planejados:
+
+- [ ] **GitHub Action de custo em Pull Request** — comenta no PR o impacto estimado das mudanças de IaC antes do merge
+- [ ] **Unit economics** — custo por cliente, por requisição ou por ambiente, a partir de tags e métricas de aplicação
+- [ ] **Visão multi-tenant consolidada** — um único relatório cobrindo vários tenants, para CSPs e MSPs
+- [ ] **Digest agendado no Teams e no Slack** — resumo periódico com histórico publicado em site estático
+- [ ] **Detecção de anomalias com causa raiz** — identifica qual recurso ou resource group provocou o pico de gasto
+- [ ] **Simulador de compromissos** — compara Reserved Instances, Savings Plans e Spot, com cálculo de payback
+- [ ] **Score de maturidade FinOps** — nota de 0 a 100 para o tenant, com comparação entre execuções
 
 ## Screenshot do dashboard
 
