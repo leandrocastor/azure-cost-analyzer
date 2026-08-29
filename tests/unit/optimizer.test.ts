@@ -62,4 +62,78 @@ describe('OptimizerService', () => {
     ] as never);
     expect(ordered.map((item) => item.roi)).toEqual([3, 2, 1]);
   });
+  describe('savings fidelity', () => {
+    const pricedResource = {
+      id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a',
+      name: 'disk-a',
+      type: 'Microsoft.Compute/disks',
+      resourceGroup: 'rg-a',
+      location: 'brazilsouth',
+      sku: 'Premium_LRS',
+      tags: {},
+      status: 'Succeeded',
+    };
+
+    it('publishes the resolved list price without inflating it', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        {
+          resource: pricedResource,
+          reason: 'Disco não está anexado a nenhuma VM',
+          idleScore: 95,
+          estimatedMonthlySavings: 174.93,
+          metrics: [],
+          evidence: {
+            observationWindowDays: 0,
+            dataPoints: 0,
+            metrics: [],
+            savingsBasis: 'retail-price',
+            savingsBasisDetail: 'Preço de lista Azure para P10 LRS Disk',
+            confidence: 'high',
+          },
+        },
+      ]);
+
+      // The heuristic used to turn this into 314.87 by taking a floor and then
+      // applying a premium multiplier on top of an already exact number.
+      expect(recommendation?.monthlySavings).toBe(174.93);
+      expect(recommendation?.annualSavings).toBe(2099.16);
+    });
+
+    it('still estimates when no list price could be resolved', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        {
+          resource: pricedResource,
+          reason: 'Disco não está anexado a nenhuma VM',
+          idleScore: 95,
+          estimatedMonthlySavings: 30,
+          metrics: [],
+          evidence: {
+            observationWindowDays: 0,
+            dataPoints: 0,
+            metrics: [],
+            savingsBasis: 'heuristic',
+            savingsBasisDetail: 'Estimativa média por tipo de recurso',
+            confidence: 'low',
+          },
+        },
+      ]);
+
+      expect(recommendation?.monthlySavings).toBeGreaterThan(30);
+    });
+
+    it('cleans up a stopped VM instead of advising a downsize', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        {
+          resource: { ...pricedResource, type: 'Microsoft.Compute/virtualMachines', name: 'vm-parada' },
+          reason: 'VM desligada (deallocated), mas os discos continuam sendo cobrados',
+          idleScore: 90,
+          estimatedMonthlySavings: 349.86,
+          metrics: [],
+        },
+      ]);
+
+      // Downsizing a machine that is already off saves nothing.
+      expect(recommendation?.actionType).toBe('CLEANUP');
+    });
+  });
 });

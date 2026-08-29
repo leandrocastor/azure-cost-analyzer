@@ -65,7 +65,7 @@ describe('WafScorecardService', () => {
 
     const check = result.checks.find((item) => item.id === 'waste-ratio');
     expect(check?.status).toBe('fail');
-    expect(check?.evidence).toContain('50.0%');
+    expect(check?.evidence).toContain('50,0%');
   });
 
   it('keeps the waste check applicable only when costs are known', () => {

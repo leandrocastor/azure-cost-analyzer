@@ -18,8 +18,8 @@ export class OptimizerService {
    */
   public async generateRecommendations(idleResources: IdleResource[]): Promise<Recommendation[]> {
     const recommendations = idleResources.map((idleResource) => {
-      const actionType = this.pickActionType(idleResource.resource.type);
-      const monthlySavings = this.calculateMonthlySavings(idleResource.resource, idleResource.estimatedMonthlySavings);
+      const actionType = this.pickActionType(idleResource.resource.type, idleResource.reason);
+      const monthlySavings = this.resolveMonthlySavings(idleResource);
       const annualSavings = monthlySavings * 12;
       const risk = this.assessRisk(idleResource.resource, actionType);
       const effort = this.estimateEffort(actionType);
@@ -83,7 +83,24 @@ export class OptimizerService {
   }
 
   /**
-   * Estimates monthly savings using resource metadata and detector hints.
+   * Chooses the saving figure to publish for a finding.
+   *
+   * When the detector resolved a real list price, that number is used verbatim.
+   * Passing it through the heuristic used to inflate it by up to 360 percent
+   * (a disk priced at 174.93 was published as 314.87), which silently undid the
+   * price lookup and overstated the headline savings of the whole report.
+   */
+  private resolveMonthlySavings(idleResource: IdleResource): number {
+    if (idleResource.evidence?.savingsBasis === 'retail-price') {
+      return Number(idleResource.estimatedMonthlySavings.toFixed(2));
+    }
+
+    return this.calculateMonthlySavings(idleResource.resource, idleResource.estimatedMonthlySavings);
+  }
+
+  /**
+   * Estimates monthly savings from resource metadata, used only when no list price
+   * could be resolved for the resource.
    */
   public calculateMonthlySavings(resource: Resource, baseline = 0): number {
     const skuName = resource.sku.toLowerCase();
@@ -120,11 +137,14 @@ export class OptimizerService {
     return descriptions[actionType];
   }
 
-  private pickActionType(resourceType: string): ActionType {    if (resourceType.includes('disks') || resourceType.includes('publicIPAddresses')) {
+  private pickActionType(resourceType: string, reason = ''): ActionType {
+    if (resourceType.includes('disks') || resourceType.includes('publicIPAddresses')) {
       return 'CLEANUP';
     }
     if (resourceType.includes('virtualMachines')) {
-      return 'DOWNSIZE';
+      // A VM that is already deallocated cannot be downsized into savings: what is
+      // still being billed are the disks it holds.
+      return /desligada|deallocated/i.test(reason) ? 'CLEANUP' : 'DOWNSIZE';
     }
     if (resourceType.includes('storageAccounts')) {
       return 'DELETE';

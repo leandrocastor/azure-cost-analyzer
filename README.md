@@ -210,6 +210,23 @@ Cada achado carrega a evidência que o sustenta:
 
 > Os valores são **preços de lista públicos**. Descontos de Enterprise Agreement, CSP, reservas e Savings Plans não são refletidos, então a economia real tende a ser menor do que a exibida. Quando a SKU ou a região não tem meter correspondente, o relatório cai para a média aproximada e marca o achado com base `heuristic` e confiança reduzida.
 
+#### Precisão da detecção
+
+Um relatório de FinOps só é útil se cada achado resistir ao contraditório do time de infraestrutura. Estas regras existem para eliminar falsos positivos:
+
+| Situação | Como é tratada |
+| --- | --- |
+| Disco anexado a uma VM desligada | **Não** é órfão. O Azure marca esse disco como `Reserved`, e apenas `Unattached` é considerado órfão |
+| VM desligada (`deallocated`) | Não é sugerida para desligar (o compute já custa zero). Vira o achado "VM desligada com discos ainda cobrados", com economia calculada pelo preço real dos discos |
+| Recurso sem amostras de métrica | Ignorado. Uma série vazia significa "nunca medido" — recurso recém-criado, tier que não emite a métrica ou falta de Monitoring Reader — e não "ocioso". São exigidas ao menos 3 amostras |
+| Public IP Basic dinâmico | Ignorado: não é cobrado |
+| Load Balancer Basic | Ignorado: não é cobrado |
+| App Service em tier Free, Shared, Dynamic ou FlexConsumption | Ignorado: não há custo fixo a economizar |
+| Banco `master` do Azure SQL | Ignorado: é um banco de sistema |
+| Public IP associado a NAT Gateway ou Prefix | Não é órfão, mesmo sem `ipConfiguration` |
+
+A economia exibida também é fiel: quando o preço de lista é resolvido, ele é usado **literalmente**, sem multiplicadores ou pisos artificiais que inflavam os valores.
+
 #### Scorecard do Well-Architected Framework
 
 O relatório atribui uma nota de 0 a 100 ao pilar **Cost Optimization**, avaliando oito controles: proporção de desperdício, recursos órfãos, tags de responsável, tags de ambiente, rightsizing, visibilidade de custos, concentração de gasto e acionabilidade das recomendações. Controles que não podem ser medidos no ambiente são excluídos do cálculo em vez de baixarem a nota silenciosamente.
