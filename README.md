@@ -29,7 +29,9 @@ npm install -g .
 
 ### Opção 2 — Execução pontual via Azure Cloud Shell (sem instalar)
 
-Ideal para uma análise rápida direto no Azure Cloud Shell, sem precisar clonar ou instalar nada permanentemente — no mesmo espírito do [Azure Resource Inventory (ARI)](https://github.com/microsoft/ARI), que roda com um único comando após a instalação do módulo.
+Ideal para uma análise rápida direto no Azure Cloud Shell, sem precisar clonar ou instalar nada permanentemente.
+
+> **Importante:** use o Cloud Shell no modo **Bash** (não PowerShell) para rodar o comando abaixo.
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
