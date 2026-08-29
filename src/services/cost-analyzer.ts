@@ -12,8 +12,40 @@ import { AzureClientService } from '@/services/azure-client';
 import { Cache } from '@/utils/cache';
 import { AzureApiError } from '@/utils/errors';
 import { createLogger } from '@/utils/logger';
+import { QpuLimiter, costManagementQpuLimiter } from '@/utils/qpu-limiter';
+import { getRetryAfterMs, getStatusCode, isThrottlingError } from '@/utils/retry';
 
 type CostGroupBy = 'service' | 'resource-group' | 'location' | 'tags';
+
+/**
+ * Marks a dimension that was not part of the query grouping, so it can be dropped
+ * from the summary instead of being reported as a real cost bucket.
+ */
+const UNAVAILABLE_DIMENSION = '__unavailable__';
+
+/**
+ * Explains a cost query failure in terms the operator can act on. Being throttled
+ * and lacking permission produce the same "no costs" outcome but require opposite
+ * responses, so they must never be reported with the same generic message.
+ */
+const describeCostQueryFailure = (error: unknown): string => {
+  const statusCode = getStatusCode(error);
+
+  if (isThrottlingError(error)) {
+    return 'Limite de consultas do Cost Management atingido (HTTP 429). A cota é por tenant e considera 1 unidade por mês de dados consultado; reduza --period ou aguarde alguns minutos antes de rodar novamente.';
+  }
+
+  if (statusCode === 403 || statusCode === 401) {
+    return 'Sem permissão para consultar custos nesta assinatura. É necessário o papel Cost Management Reader (ou Reader) no escopo da assinatura.';
+  }
+
+  if (statusCode === 404) {
+    return 'Escopo não encontrado ou sem dados de custo. Assinaturas de benefício, como MSDN e Visual Studio, podem não expor custos pela API de Cost Management.';
+  }
+
+  const detail = error instanceof Error ? error.message : 'erro desconhecido';
+  return `Falha ao consultar os custos no Azure: ${detail}`;
+};
 
 type QueryColumn = {
   name?: string;
@@ -43,7 +75,10 @@ export class CostAnalyzerService {
   private readonly logger = createLogger({ service: 'cost-analyzer' });
   private readonly cache = new Cache<unknown>(15 * 60 * 1000);
 
-  public constructor(private readonly azureClient = new AzureClientService()) {}
+  public constructor(
+    private readonly azureClient = new AzureClientService(),
+    private readonly qpuLimiter: QpuLimiter = costManagementQpuLimiter,
+  ) {}
 
   /**
    * Queries summarized cost data for a period and grouping dimension.
@@ -65,26 +100,46 @@ export class CostAnalyzerService {
       this.azureClient.getCredential(),
     ) as unknown as CostQueryClient;
 
+    // Cost Management charges one QPU per month of data and enforces the budget per
+    // tenant, so pace the call before spending it rather than being throttled.
+    const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
+
     try {
-      const result = await this.azureClient.executeWithRetry(() =>
-        client.query.usage(scope, {
-          type: 'ActualCost',
-          timeframe: 'Custom',
-          timePeriod: {
-            from: new Date(startDate),
-            to: new Date(endDate),
-          },
-          dataset: {
-            granularity: 'Daily',
-            aggregation: {
-              totalCost: {
-                name: 'PreTaxCost',
-                function: 'Sum',
+      const result = await this.azureClient.executeWithRetry(
+        async () => {
+          await this.qpuLimiter.acquire(qpuCost);
+          try {
+            return await client.query.usage(scope, {
+              type: 'ActualCost',
+              timeframe: 'Custom',
+              timePeriod: {
+                from: new Date(startDate),
+                to: new Date(endDate),
               },
-            },
-            grouping: [{ type: 'Dimension', name: this.resolveGroupBy(groupBy) }],
-          },
-        }),
+              dataset: {
+                // The summary only needs totals per dimension; daily granularity would
+                // multiply the payload without adding anything the report uses.
+                granularity: 'None',
+                aggregation: {
+                  totalCost: {
+                    name: 'PreTaxCost',
+                    function: 'Sum',
+                  },
+                },
+                // The API accepts at most two groupings per query.
+                grouping: this.resolveGrouping(groupBy),
+              },
+            });
+          } catch (error: unknown) {
+            if (isThrottlingError(error)) {
+              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
+            }
+            throw error;
+          }
+        },
+        // Throttling cool-downs are enforced per tenant and can span a full minute,
+        // so cost queries need a longer budget than a generic Azure call.
+        { maxAttempts: 8, maxDelayMs: 120_000 },
       );
 
       const summary = this.toSummary(result, startDate, endDate);
@@ -92,7 +147,7 @@ export class CostAnalyzerService {
       return summary;
     } catch (error: unknown) {
       this.logger.error('Azure cost query failed', { error: error instanceof Error ? error.message : 'unknown' });
-      throw new AzureApiError('Failed to query Azure costs', 500, error);
+      throw new AzureApiError(describeCostQueryFailure(error), getStatusCode(error) ?? 500, error);
     }
   }
 
@@ -107,29 +162,42 @@ export class CostAnalyzerService {
     ) as unknown as CostQueryClient;
 
     try {
-      const result = await this.azureClient.executeWithRetry(() =>
-        client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId()}`, {
-          type: 'ActualCost',
-          timeframe: 'Custom',
-          timePeriod: {
-            from: start,
-            to: now,
-          },
-          dataset: {
-            granularity: 'Daily',
-            aggregation: {
-              totalCost: {
-                name: 'PreTaxCost',
-                function: 'Sum',
+      const qpuCost = QpuLimiter.estimateCost(start, now);
+      const result = await this.azureClient.executeWithRetry(
+        async () => {
+          await this.qpuLimiter.acquire(qpuCost);
+          try {
+            return await client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId()}`, {
+              type: 'ActualCost',
+              timeframe: 'Custom',
+              timePeriod: {
+                from: start,
+                to: now,
               },
-            },
-            grouping: [
-              { type: 'Dimension', name: 'ServiceName' },
-              { type: 'Dimension', name: 'ResourceGroup' },
-              { type: 'Dimension', name: 'ResourceLocation' },
-            ],
-          },
-        }),
+              dataset: {
+                // Monthly buckets are enough for trend analysis and keep the payload small.
+                granularity: 'Monthly',
+                aggregation: {
+                  totalCost: {
+                    name: 'PreTaxCost',
+                    function: 'Sum',
+                  },
+                },
+                // The API accepts at most two groupings per query.
+                grouping: [
+                  { type: 'Dimension', name: 'ServiceName' },
+                  { type: 'Dimension', name: 'ResourceGroup' },
+                ],
+              },
+            });
+          } catch (error: unknown) {
+            if (isThrottlingError(error)) {
+              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
+            }
+            throw error;
+          }
+        },
+        { maxAttempts: 8, maxDelayMs: 120_000 },
       );
 
       return this.toEntries(result);
@@ -242,6 +310,24 @@ export class CostAnalyzerService {
     return mapping[groupBy];
   }
 
+  /**
+   * Builds the grouping clause. The API accepts at most two groupings, so the
+   * requested dimension is paired with a complementary one to fill more of the
+   * report from a single request instead of spending extra QPU on another call.
+   */
+  private resolveGrouping(groupBy: CostGroupBy): { type: string; name: string }[] {
+    const primary = this.resolveGroupBy(groupBy);
+    const companion: Partial<Record<CostGroupBy, string>> = {
+      service: 'ResourceGroup',
+      'resource-group': 'ServiceName',
+      location: 'ServiceName',
+    };
+
+    const secondary = companion[groupBy];
+    const dimensions = secondary ? [primary, secondary] : [primary];
+    return dimensions.map((name) => ({ type: 'Dimension', name }));
+  }
+
   private toSummary(result: QueryResult, startDate: string, endDate: string): CostSummary {
     const entries = this.toEntries(result);
     const summary: CostSummary = {
@@ -255,10 +341,16 @@ export class CostAnalyzerService {
 
     for (const entry of entries) {
       summary.totalAmount += entry.amount;
+      // A dimension that was not part of the grouping carries no real value, so it
+      // is omitted instead of being charted as a bogus catch-all bucket.
       addToBucket(summary.byService, entry.service, entry.amount);
       addToBucket(summary.byResourceGroup, entry.resourceGroup, entry.amount);
       addToBucket(summary.byLocation, entry.location, entry.amount);
     }
+
+    delete summary.byService[UNAVAILABLE_DIMENSION];
+    delete summary.byResourceGroup[UNAVAILABLE_DIMENSION];
+    delete summary.byLocation[UNAVAILABLE_DIMENSION];
 
     return CostSummarySchema.parse({
       ...summary,
@@ -269,32 +361,33 @@ export class CostAnalyzerService {
   private toEntries(result: QueryResult): CostEntry[] {
     const columns = (result.columns ?? []).map((column) => column.name ?? '');
     const rows = result.rows ?? [];
-    return rows.map((row) => {
-      const entry = CostEntrySchema.parse({
-        date: this.readColumn(row, columns, ['UsageDate', 'Date'], 1, new Date().toISOString().slice(0, 10)),
-        amount: Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost'], 0, 0)),
-        currency: this.readColumn(row, columns, ['Currency', 'BillingCurrency'], 2, 'USD'),
-        service: this.readColumn(row, columns, ['ServiceName'], 3, 'Unknown Service'),
-        resourceGroup: this.readColumn(row, columns, ['ResourceGroup'], 4, 'unknown-rg'),
-        location: this.readColumn(row, columns, ['ResourceLocation'], 5, 'global'),
+    return rows.map((row) =>
+      CostEntrySchema.parse({
+        date:
+          this.readColumn(row, columns, ['UsageDate', 'Date']) ??
+          new Date().toISOString().slice(0, 10),
+        amount: Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']) ?? 0),
+        currency: this.readColumn(row, columns, ['Currency', 'BillingCurrency']) ?? 'USD',
+        service: this.readColumn(row, columns, ['ServiceName']) ?? UNAVAILABLE_DIMENSION,
+        resourceGroup: this.readColumn(row, columns, ['ResourceGroup']) ?? UNAVAILABLE_DIMENSION,
+        location: this.readColumn(row, columns, ['ResourceLocation']) ?? UNAVAILABLE_DIMENSION,
         tags: {},
-      });
-      return entry;
-    });
+      }),
+    );
   }
 
-  private readColumn(
-    row: unknown[],
-    columns: string[],
-    names: string[],
-    fallbackIndex: number,
-    fallbackValue: string | number,
-  ): string {
-    const index = columns.findIndex((name) => names.includes(name));
-    const value = row[index >= 0 ? index : fallbackIndex];
-    if (typeof value === 'string' || typeof value === 'number') {
-      return String(value);
+  /**
+   * Reads a column strictly by name. Positional fallbacks are unsafe here: the
+   * Cost Management response only contains the columns that were requested, and
+   * their order varies, so guessing by index silently mixes up dimensions.
+   */
+  private readColumn(row: unknown[], columns: string[], names: string[]): string | undefined {
+    const index = columns.findIndex((column) => names.includes(column));
+    if (index < 0) {
+      return undefined;
     }
-    return String(fallbackValue);
+
+    const value = row[index];
+    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
   }
 }

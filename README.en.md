@@ -47,6 +47,20 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 
 **No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
 
+#### Cost Management query quota (QPU)
+
+The Azure Cost Management API charges each query in **QPU (Query Processing Units)**: roughly **1 QPU per month of data requested**. Limits are enforced **per tenant**:
+
+| Window | Limit |
+| --- | --- |
+| 10 seconds | 12 QPU |
+| 1 minute | 60 QPU |
+| 1 hour | 600 QPU |
+
+Four subscriptions with `--period 3` therefore consume 12 QPU and exhaust the 10-second window. The command **paces itself within this quota**, waiting between queries and honoring the cool-down Azure returns on HTTP 429 — so runs across many subscriptions may take a few minutes. The spinner shows when it is waiting on quota.
+
+To speed things up, lower `--period` or narrow the scope with `--subscription`.
+
 Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command — but those commands require a single subscription (via `--subscription` or `AZURE_SUBSCRIPTION_ID`).
 
 ## Configuration

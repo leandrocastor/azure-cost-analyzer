@@ -4,6 +4,12 @@ export type RetryConfig = {
   maxAttempts?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /**
+   * Minimum delay applied to HTTP 429 responses that carry no server-provided
+   * cool-down. Throttling windows are measured in seconds, so retrying after a
+   * few hundred milliseconds is always rejected and only consumes more quota.
+   */
+  throttleFloorMs?: number;
   sleep?: (ms: number) => Promise<void>;
   onRetry?: (attempt: number, error: unknown, delayMs: number) => void;
 };
@@ -14,7 +20,7 @@ const defaultSleep = async (ms: number): Promise<void> => {
   });
 };
 
-const getStatusCode = (error: unknown): number | undefined => {
+export const getStatusCode = (error: unknown): number | undefined => {
   if (error instanceof AzureApiError) {
     return error.statusCode;
   }
@@ -35,6 +41,11 @@ const getStatusCode = (error: unknown): number | undefined => {
 };
 
 const headerNames = [
+  // Documented by Cost Management for HTTP 429 on the Query API. The service bills
+  // requests in Query Processing Units (QPU) and reports the required cool-down here.
+  'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after',
+  // Legacy header inherited from the Consumption API, still referenced by the schema.
+  'x-ms-ratelimit-microsoft.consumption-retry-after',
   'retry-after',
   'x-ms-retry-after-ms',
   'x-ms-ratelimit-microsoft.costmanagement-entity-retry-after',
@@ -50,11 +61,26 @@ const readHeader = (headers: unknown, name: string): string | undefined => {
   const getter = Reflect.get(headers, 'get');
   if (typeof getter === 'function') {
     const value = (getter as (key: string) => unknown).call(headers, name);
-    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+    if (typeof value === 'string' || typeof value === 'number') {
+      return String(value);
+    }
   }
 
-  const value = Reflect.get(headers, name);
-  return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+  // Plain-object headers may preserve the original casing, so look the key up
+  // case-insensitively before giving up.
+  const direct = Reflect.get(headers, name);
+  if (typeof direct === 'string' || typeof direct === 'number') {
+    return String(direct);
+  }
+
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() === target && (typeof value === 'string' || typeof value === 'number')) {
+      return String(value);
+    }
+  }
+
+  return undefined;
 };
 
 /**
@@ -101,8 +127,33 @@ export const getRetryAfterMs = (error: unknown): number | undefined => {
   return undefined;
 };
 
+/**
+ * Reports whether an error is an HTTP 429 throttling response.
+ */
+const THROTTLING_MESSAGE_PATTERN = /too many requests|rate ?limit|throttl/i;
+
+/**
+ * Some Azure SDK clients (notably arm-costmanagement) surface 429 responses as a
+ * plain Error carrying only the message, so detection cannot rely on status alone.
+ */
+const hasThrottlingMessage = (error: unknown): boolean => {
+  if (error instanceof Error) {
+    return THROTTLING_MESSAGE_PATTERN.test(error.message);
+  }
+
+  if (typeof error === 'object' && error !== null) {
+    const message = Reflect.get(error, 'message');
+    return typeof message === 'string' && THROTTLING_MESSAGE_PATTERN.test(message);
+  }
+
+  return false;
+};
+
+export const isThrottlingError = (error: unknown): boolean =>
+  error instanceof RateLimitError || getStatusCode(error) === 429 || hasThrottlingMessage(error);
+
 export const isRetryableError = (error: unknown): boolean => {
-  if (error instanceof RateLimitError) {
+  if (error instanceof RateLimitError || hasThrottlingMessage(error)) {
     return true;
   }
 
@@ -134,6 +185,7 @@ export const retry = async <T>(
     maxAttempts = 6,
     baseDelayMs = 250,
     maxDelayMs = 90_000,
+    throttleFloorMs = 15_000,
     sleep = defaultSleep,
     onRetry,
   } = config;
@@ -151,9 +203,10 @@ export const retry = async <T>(
       }
 
       const retryAfterMs = getRetryAfterMs(error);
-      const delayMs = retryAfterMs
-        ? Math.min(retryAfterMs, maxDelayMs)
-        : Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+      const backoffMs = isThrottlingError(error)
+        ? Math.max(throttleFloorMs, baseDelayMs * 2 ** (attempt - 1))
+        : baseDelayMs * 2 ** (attempt - 1);
+      const delayMs = Math.min(retryAfterMs ?? backoffMs, maxDelayMs);
 
       onRetry?.(attempt, error, delayMs);
       await sleep(delayMs);

@@ -1,5 +1,5 @@
 import { AzureApiError, RateLimitError } from '@/utils/errors';
-import { getRetryAfterMs, isRetryableError, retry } from '@/utils/retry';
+import { getRetryAfterMs, isRetryableError, isThrottlingError, retry } from '@/utils/retry';
 
 describe('retry', () => {
   it('returns on first success', async () => {
@@ -182,5 +182,59 @@ describe('retry', () => {
     );
     expect(result).toBe('ok');
     expect(attempts).toBe(6);
+  });
+
+  it('reads the documented Cost Management QPU retry header', () => {
+    const error = {
+      statusCode: 429,
+      response: { headers: { 'x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after': '47' } },
+    };
+    expect(getRetryAfterMs(error)).toBe(47_000);
+  });
+
+  it('reads retry headers regardless of casing', () => {
+    const error = {
+      statusCode: 429,
+      response: { headers: { 'X-MS-RateLimit-Microsoft.CostManagement-QPU-Retry-After': '12' } },
+    };
+    expect(getRetryAfterMs(error)).toBe(12_000);
+  });
+
+  it('detects throttling from the SDK message when no status code is present', () => {
+    expect(isThrottlingError(new Error('Too many requests. Please retry.'))).toBe(true);
+    expect(isRetryableError(new Error('Too many requests. Please retry.'))).toBe(true);
+    expect(isThrottlingError(new Error('boom'))).toBe(false);
+  });
+
+  it('applies a floor to throttling backoff so retries stop burning quota', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    await retry(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new Error('Too many requests. Please retry.');
+        }
+        return 'ok';
+      },
+      { sleep: async (ms) => delays.push(ms), baseDelayMs: 250, throttleFloorMs: 15_000 },
+    );
+    expect(delays).toEqual([15_000, 15_000]);
+  });
+
+  it('keeps the short backoff for non-throttling failures', async () => {
+    const delays: number[] = [];
+    let attempts = 0;
+    await retry(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new AzureApiError('server error', 500);
+        }
+        return 'ok';
+      },
+      { sleep: async (ms) => delays.push(ms), baseDelayMs: 250, throttleFloorMs: 15_000 },
+    );
+    expect(delays).toEqual([250, 500]);
   });
 });
