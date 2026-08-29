@@ -272,7 +272,7 @@ describe('CLI command classes', () => {
     await ExportCommand.run(['--output', reportOutputPath]);
 
     expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining('2 subscriptions analyzed'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Costs unavailable for "Subscription A"'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Custos indisponíveis para "Subscription A"'));
 
     const html = readFileSync(reportOutputPath, 'utf8');
     expect(html).toContain('Too many requests. Please retry.');
