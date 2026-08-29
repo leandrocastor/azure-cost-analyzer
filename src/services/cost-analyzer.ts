@@ -71,8 +71,8 @@ export class CostAnalyzerService {
           type: 'ActualCost',
           timeframe: 'Custom',
           timePeriod: {
-            from: startDate,
-            to: endDate,
+            from: new Date(startDate),
+            to: new Date(endDate),
           },
           dataset: {
             granularity: 'Daily',
@@ -112,8 +112,8 @@ export class CostAnalyzerService {
           type: 'ActualCost',
           timeframe: 'Custom',
           timePeriod: {
-            from: start.toISOString().slice(0, 10),
-            to: now.toISOString().slice(0, 10),
+            from: start,
+            to: now,
           },
           dataset: {
             granularity: 'Daily',

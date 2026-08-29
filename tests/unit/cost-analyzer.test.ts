@@ -42,6 +42,15 @@ describe('CostAnalyzerService', () => {
     const summary = await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
     expect(summary.totalAmount).toBe(150);
     expect(summary.byService).toEqual({ Compute: 100, Storage: 50 });
+    expect(usageMock).toHaveBeenCalledWith(
+      '/subscriptions/sub',
+      expect.objectContaining({
+        timePeriod: {
+          from: new Date('2026-01-01'),
+          to: new Date('2026-01-31'),
+        },
+      }),
+    );
   });
 
   it('caches query results', async () => {
