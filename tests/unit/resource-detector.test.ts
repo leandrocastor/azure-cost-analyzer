@@ -84,6 +84,10 @@ describe('ResourceDetectorService', () => {
     const service = new ResourceDetectorService(azureClient as never);
     const items = await service.detectIdleVMs();
     expect(items).toHaveLength(1);
+    expect(metricsListMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ aggregation: 'Average' }),
+    );
   });
 
   it('detects idle app services', async () => {
@@ -92,6 +96,10 @@ describe('ResourceDetectorService', () => {
     const service = new ResourceDetectorService(azureClient as never);
     const items = await service.detectIdleAppServices();
     expect(items).toHaveLength(1);
+    expect(metricsListMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ aggregation: 'Total' }),
+    );
   });
 
   it('detects idle storage accounts', async () => {
