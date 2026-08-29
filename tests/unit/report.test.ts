@@ -17,6 +17,20 @@ describe('generateStaticReport', () => {
     expect(html).toContain('id="report-data"');
   });
 
+  it('renders the interface in Brazilian Portuguese', () => {
+    const html = generateStaticReport(baseData);
+    expect(html).toContain('lang="pt-BR"');
+    expect(html).toContain('Relatório do Azure Cost Analyzer');
+    expect(html).toContain('Custo Total');
+    expect(html).toContain('Recursos Ociosos');
+    expect(html).toContain('Recomendações');
+    expect(html).toContain('Economia Anual Potencial');
+    expect(html).toContain('Distribuição de Custos');
+    // Nomes de recursos e serviços do Azure permanecem em inglês.
+    expect(html).toContain('Resource Group');
+    expect(html).toContain('Location');
+  });
+
   it('embeds the cost summary, idle resources, and recommendations as JSON', () => {
     const html = generateStaticReport(baseData);
     expect(html).toContain('"totalAmount":1105');

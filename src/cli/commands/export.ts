@@ -138,7 +138,7 @@ export default class ExportCommand extends Command {
           analyzed = true;
         } catch (error: unknown) {
           warnings.push(
-            `Costs unavailable for "${subscription.displayName}": ${error instanceof Error ? error.message : 'unknown error'}`,
+            `Custos indisponíveis para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
           );
         }
 
@@ -148,7 +148,7 @@ export default class ExportCommand extends Command {
           analyzed = true;
         } catch (error: unknown) {
           warnings.push(
-            `Idle resource detection unavailable for "${subscription.displayName}": ${error instanceof Error ? error.message : 'unknown error'}`,
+            `Detecção de recursos ociosos indisponível para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
           );
         }
 

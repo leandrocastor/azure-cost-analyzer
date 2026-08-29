@@ -44,11 +44,11 @@ export const generateStaticReport = (data: StaticReportData): string => {
   });
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Azure Cost Analyzer Report</title>
+    <title>Relatório do Azure Cost Analyzer</title>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       :root {
@@ -130,44 +130,44 @@ export const generateStaticReport = (data: StaticReportData): string => {
   </head>
   <body>
     <header>
-      <h1>Azure Cost Analyzer Report</h1>
+      <h1>Relatório do Azure Cost Analyzer</h1>
       <span id="report-meta"></span>
     </header>
     <main>
       <div id="report-warnings"></div>
       <div class="kpi-grid">
         <div class="kpi-card cost">
-          <div class="label">Total Cost</div>
+          <div class="label">Custo Total</div>
           <div class="value" id="kpi-cost"></div>
           <div class="sub" id="kpi-cost-sub"></div>
         </div>
         <div class="kpi-card idle">
-          <div class="label">Idle Resources</div>
+          <div class="label">Recursos Ociosos</div>
           <div class="value" id="kpi-idle"></div>
-          <div class="sub">Resources with low utilization</div>
+          <div class="sub">Recursos com baixa utilização</div>
         </div>
         <div class="kpi-card recs">
-          <div class="label">Recommendations</div>
+          <div class="label">Recomendações</div>
           <div class="value" id="kpi-recs"></div>
-          <div class="sub">Optimization opportunities</div>
+          <div class="sub">Oportunidades de otimização</div>
         </div>
         <div class="kpi-card savings">
-          <div class="label">Annual Savings Opportunity</div>
+          <div class="label">Economia Anual Potencial</div>
           <div class="value" id="kpi-savings"></div>
-          <div class="sub">Potential savings if all recommendations applied</div>
+          <div class="sub">Economia estimada se todas as recomendações forem aplicadas</div>
         </div>
       </div>
 
       <section>
-        <h2>Idle Resources</h2>
+        <h2>Recursos Ociosos</h2>
         <div class="card">
           <div class="table-controls">
-            <input id="idle-filter" type="text" placeholder="Filter by name or resource group…" oninput="renderIdleTable()" />
+            <input id="idle-filter" type="text" placeholder="Filtrar por nome ou resource group…" oninput="renderIdleTable()" />
             <select id="idle-sort" onchange="renderIdleTable()">
-              <option value="idleScore-desc">Idle Score ↓</option>
-              <option value="idleScore-asc">Idle Score ↑</option>
-              <option value="estimatedMonthlySavings-desc">Savings ↓</option>
-              <option value="estimatedMonthlySavings-asc">Savings ↑</option>
+              <option value="idleScore-desc">Score de ociosidade ↓</option>
+              <option value="idleScore-asc">Score de ociosidade ↑</option>
+              <option value="estimatedMonthlySavings-desc">Economia ↓</option>
+              <option value="estimatedMonthlySavings-asc">Economia ↑</option>
             </select>
           </div>
           <div id="idle-table-container"></div>
@@ -175,23 +175,23 @@ export const generateStaticReport = (data: StaticReportData): string => {
       </section>
 
       <section>
-        <h2>Recommendations</h2>
+        <h2>Recomendações</h2>
         <div class="card" id="recs-container"></div>
       </section>
 
       <section>
-        <h2>Cost Breakdown</h2>
+        <h2>Distribuição de Custos</h2>
         <div class="charts-grid">
           <div class="chart-card">
-            <h3>By Service</h3>
+            <h3>Por Service</h3>
             <div id="chart-service" class="bar-chart"></div>
           </div>
           <div class="chart-card">
-            <h3>By Resource Group</h3>
+            <h3>Por Resource Group</h3>
             <div id="chart-rg" class="bar-chart"></div>
           </div>
           <div class="chart-card">
-            <h3>By Location</h3>
+            <h3>Por Location</h3>
             <div id="chart-loc" class="bar-chart"></div>
           </div>
         </div>
@@ -204,8 +204,27 @@ export const generateStaticReport = (data: StaticReportData): string => {
       const idleData = REPORT.idleResources;
       const recsData = REPORT.recommendations;
 
-      const fmt = (n) => typeof n === 'number' ? '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
-      const fmtFull = (n) => typeof n === 'number' ? '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+      const fmt = (n) => typeof n === 'number' ? '$' + n.toLocaleString('pt-BR', { maximumFractionDigits: 0 }) : '—';
+      const fmtFull = (n) => typeof n === 'number' ? '$' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+
+      // Rótulos traduzidos para valores enumerados. Nomes de recursos, serviços e
+      // demais dados vindos do Azure permanecem no idioma original.
+      const LEVEL_LABELS = { low: 'baixo', medium: 'médio', high: 'alto' };
+      const ACTION_LABELS = {
+        DELETE: 'Excluir',
+        DOWNSIZE: 'Reduzir porte',
+        CHANGE_SKU: 'Alterar SKU',
+        SCHEDULE: 'Agendar',
+        MIGRATE: 'Migrar',
+        CLEANUP: 'Limpar',
+      };
+      const STATUS_LABELS = {
+        new: 'novo',
+        planned: 'planejado',
+        'in-progress': 'em andamento',
+        completed: 'concluído',
+        dismissed: 'descartado',
+      };
 
       // All Azure-provided strings are untrusted (resource names/tags); escape before innerHTML use.
       const esc = (value) => {
@@ -242,11 +261,11 @@ export const generateStaticReport = (data: StaticReportData): string => {
         });
 
         if (!rows.length) {
-          container.innerHTML = '<div class="empty">No idle resources found.</div>';
+          container.innerHTML = '<div class="empty">Nenhum recurso ocioso encontrado.</div>';
           return;
         }
 
-        const thead = '<thead><tr><th>Name</th><th>Type</th><th>Resource Group</th><th>Location</th><th>Idle Score</th><th>Monthly Savings</th><th>Reason</th></tr></thead>';
+        const thead = '<thead><tr><th>Nome</th><th>Tipo</th><th>Resource Group</th><th>Location</th><th>Score de ociosidade</th><th>Economia mensal</th><th>Motivo</th></tr></thead>';
         const tbody = rows.map(r => {
           const res = r.resource || {};
           const type = (res.type || '').split('/').pop() || '—';
@@ -267,7 +286,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
       function renderRecs() {
         const container = document.getElementById('recs-container');
         if (!recsData.length) {
-          container.innerHTML = '<div class="empty">No recommendations available.</div>';
+          container.innerHTML = '<div class="empty">Nenhuma recomendação disponível.</div>';
           return;
         }
         const items = recsData.map(r => {
@@ -278,16 +297,16 @@ export const generateStaticReport = (data: StaticReportData): string => {
             + '<div class="rec-title">' + esc(r.title || '—') + '</div>'
             + '<div class="rec-desc">' + esc(r.description || '') + '</div>'
             + '<div class="rec-meta">'
-            + '<span class="badge ' + esc(risk) + '">Risk: ' + esc(risk) + '</span>'
-            + '<span class="badge ' + esc(effort) + '">Effort: ' + esc(effort) + '</span>'
-            + '<span class="badge new">' + esc(r.actionType || '—') + '</span>'
-            + '<span class="badge new">' + esc(r.status || '—') + '</span>'
+            + '<span class="badge ' + esc(risk) + '">Risco: ' + esc(LEVEL_LABELS[risk] || risk) + '</span>'
+            + '<span class="badge ' + esc(effort) + '">Esforço: ' + esc(LEVEL_LABELS[effort] || effort) + '</span>'
+            + '<span class="badge new">' + esc(ACTION_LABELS[r.actionType] || r.actionType || '—') + '</span>'
+            + '<span class="badge new">' + esc(STATUS_LABELS[r.status] || r.status || '—') + '</span>'
             + '</div>'
             + '</div>'
             + '<div class="rec-stats">'
-            + '<div class="rec-savings">' + fmt(r.annualSavings) + '/yr</div>'
+            + '<div class="rec-savings">' + fmt(r.annualSavings) + '/ano</div>'
             + '<div class="rec-roi">ROI: ' + (r.roi != null ? Number(r.roi).toFixed(1) + 'x' : '—') + '</div>'
-            + '<div style="font-size:0.75rem;color:var(--muted);margin-top:2px">' + fmtFull(r.monthlySavings) + '/mo</div>'
+            + '<div style="font-size:0.75rem;color:var(--muted);margin-top:2px">' + fmtFull(r.monthlySavings) + '/mês</div>'
             + '</div>'
             + '</div>';
         }).join('');
@@ -297,7 +316,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
       function renderBarChart(containerId, data) {
         const container = document.getElementById(containerId);
         if (!data || !Object.keys(data).length) {
-          container.innerHTML = '<div class="empty">No data.</div>';
+          container.innerHTML = '<div class="empty">Sem dados.</div>';
           return;
         }
         const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
@@ -314,12 +333,12 @@ export const generateStaticReport = (data: StaticReportData): string => {
       }
 
       document.getElementById('report-meta').textContent =
-        'Subscription ' + REPORT.subscriptionId + ' · Generated ' + new Date(REPORT.generatedAt).toLocaleString();
+        'Subscription ' + REPORT.subscriptionId + ' · Gerado em ' + new Date(REPORT.generatedAt).toLocaleString('pt-BR');
 
       const warnings = REPORT.warnings || [];
       if (warnings.length) {
         document.getElementById('report-warnings').innerHTML =
-          '<div class="warning-banner"><h3>Partial data</h3><ul>'
+          '<div class="warning-banner"><h3>Dados parciais</h3><ul>'
           + warnings.map(function (warning) { return '<li>' + esc(warning) + '</li>'; }).join('')
           + '</ul></div>';
       }
