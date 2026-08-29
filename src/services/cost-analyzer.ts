@@ -24,6 +24,13 @@ type CostGroupBy = 'service' | 'resource-group' | 'location' | 'tags';
 const UNAVAILABLE_DIMENSION = '__unavailable__';
 
 /**
+ * Azure returns an empty dimension for charges that legitimately belong to no
+ * resource group or location, such as subscription-level fees. They are real costs
+ * and must stay visible in the report under an explicit bucket.
+ */
+const UNASSIGNED_DIMENSION = 'sem atribuição';
+
+/**
  * Explains a cost query failure in terms the operator can act on. Being throttled
  * and lacking permission produce the same "no costs" outcome but require opposite
  * responses, so they must never be reported with the same generic message.
@@ -290,7 +297,8 @@ export class CostAnalyzerService {
       forecasts.push(
         CostForecastSchema.parse({
           period: formatMonth(futureDate),
-          forecastAmount: Number(currentAmount.toFixed(2)),
+          // A projection below zero is not meaningful for planning, so it is floored.
+          forecastAmount: Number(Math.max(0, currentAmount).toFixed(2)),
           confidence: Number(Math.max(0.5, 1 - Math.abs(avgGrowth)).toFixed(2)),
           trend: avgGrowth > 0.02 ? 'up' : avgGrowth < -0.02 ? 'down' : 'flat',
         }),
@@ -361,25 +369,56 @@ export class CostAnalyzerService {
   private toEntries(result: QueryResult): CostEntry[] {
     const columns = (result.columns ?? []).map((column) => column.name ?? '');
     const rows = result.rows ?? [];
-    return rows.map((row) =>
-      CostEntrySchema.parse({
+    const entries: CostEntry[] = [];
+    let skipped = 0;
+
+    for (const row of rows) {
+      const parsed = CostEntrySchema.safeParse({
         date:
           this.readColumn(row, columns, ['UsageDate', 'Date']) ??
           new Date().toISOString().slice(0, 10),
         amount: Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']) ?? 0),
         currency: this.readColumn(row, columns, ['Currency', 'BillingCurrency']) ?? 'USD',
-        service: this.readColumn(row, columns, ['ServiceName']) ?? UNAVAILABLE_DIMENSION,
-        resourceGroup: this.readColumn(row, columns, ['ResourceGroup']) ?? UNAVAILABLE_DIMENSION,
-        location: this.readColumn(row, columns, ['ResourceLocation']) ?? UNAVAILABLE_DIMENSION,
+        service: this.readDimension(row, columns, ['ServiceName']),
+        resourceGroup: this.readDimension(row, columns, ['ResourceGroup']),
+        location: this.readDimension(row, columns, ['ResourceLocation']),
         tags: {},
-      }),
-    );
+      });
+
+      // A single unexpected row must not discard the whole subscription's costs.
+      if (parsed.success) {
+        entries.push(parsed.data);
+      } else {
+        skipped += 1;
+      }
+    }
+
+    if (skipped > 0) {
+      this.logger.warn('Ignoring cost rows that could not be parsed', { skipped, total: rows.length });
+    }
+
+    return entries;
+  }
+
+  /**
+   * Reads a grouped dimension, separating two cases that must not be confused:
+   * a dimension that was never requested (and therefore carries no information)
+   * from one that Azure legitimately returns blank, such as charges billed at the
+   * subscription level that belong to no resource group.
+   */
+  private readDimension(row: unknown[], columns: string[], names: string[]): string {
+    if (!columns.some((column) => names.includes(column))) {
+      return UNAVAILABLE_DIMENSION;
+    }
+
+    return this.readColumn(row, columns, names) ?? UNASSIGNED_DIMENSION;
   }
 
   /**
    * Reads a column strictly by name. Positional fallbacks are unsafe here: the
    * Cost Management response only contains the columns that were requested, and
    * their order varies, so guessing by index silently mixes up dimensions.
+   * Blank values are reported as missing so callers can apply their own default.
    */
   private readColumn(row: unknown[], columns: string[], names: string[]): string | undefined {
     const index = columns.findIndex((column) => names.includes(column));
@@ -388,6 +427,11 @@ export class CostAnalyzerService {
     }
 
     const value = row[index];
-    return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
+    if (typeof value !== 'string' && typeof value !== 'number') {
+      return undefined;
+    }
+
+    const text = String(value).trim();
+    return text.length > 0 ? text : undefined;
   }
 }

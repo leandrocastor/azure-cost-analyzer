@@ -206,6 +206,54 @@ describe('CostAnalyzerService', () => {
     expect(dataset.grouping).toHaveLength(2);
   });
 
+  it('keeps charges that Azure returns without a resource group', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'Currency' }],
+      rows: [
+        [100, 'Compute', 'rg-a', 'BRL'],
+        [25, 'Support', '', 'BRL'],
+      ],
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+
+    const summary = await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
+
+    expect(summary.totalAmount).toBe(125);
+    expect(summary.byResourceGroup['rg-a']).toBe(100);
+    expect(Object.values(summary.byResourceGroup)).toContain(25);
+  });
+
+  it('keeps credits reported as negative charges', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'Currency' }],
+      rows: [
+        [100, 'Compute', 'rg-a', 'BRL'],
+        [-30, 'Refund', 'rg-a', 'BRL'],
+      ],
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+
+    const summary = await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
+
+    expect(summary.totalAmount).toBe(70);
+    expect(summary.byService.Refund).toBe(-30);
+  });
+
+  it('skips unparseable rows instead of discarding the whole subscription', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'Currency' }],
+      rows: [
+        [100, 'Compute', 'BRL'],
+        [Number.NaN, 'Broken', 'BRL'],
+      ],
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+
+    const summary = await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
+
+    expect(summary.totalAmount).toBe(100);
+  });
+
   it('constructs the Azure client', () => {
     new CostAnalyzerService(azureClient as never, qpuLimiter);
     expect(CostManagementClient).toBeDefined();
