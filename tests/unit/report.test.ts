@@ -208,6 +208,41 @@ describe('generateStaticReport — seções de diferenciação', () => {
     expect(html).toContain('id="inaction-section" hidden');
   });
 
+  it('renders the FinOps Decision Engine classification', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      decisionEngine: {
+        decisions: [
+          {
+            recommendationId: 'rec-1',
+            resourceId: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/serverfarms/plan-empty',
+            resourceName: 'plan-empty',
+            category: 'EXECUTAVEL_AGORA',
+            savingsStatus: 'provavel',
+            monthlySavings: 219,
+            reasoning: 'Achado de configuração com alta confiança.',
+          },
+        ],
+        confirmedMonthlySavings: 0,
+        probableMonthlySavings: 219,
+        unconfirmedMonthlySavings: 0,
+        executableNowCount: 1,
+        summary: '1 recomendação(ões) prontas para execução imediata.',
+      },
+    });
+
+    expect(html).toContain('"category":"EXECUTAVEL_AGORA"');
+    expect(html).toContain('FinOps Decision Engine');
+    expect(html).toContain('"executableNowCount":1');
+  });
+
+  it('keeps the decision engine section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"decisionEngine":null');
+    expect(html).toContain('id="decision-section" hidden');
+  });
+
   it('exposes the evidence that supports each idle finding', () => {
     const html = generateStaticReport({
       ...fullData,

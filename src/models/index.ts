@@ -363,6 +363,48 @@ export const InactionCostSchema = z.object({
   summary: z.string().min(1),
 });
 
+/**
+ * How ready a recommendation is to be executed, so an operator can triage a long
+ * list of findings instead of treating every one as equally actionable.
+ *
+ * - `EXECUTAVEL_AGORA`: strong evidence and low risk; safe to run through the
+ *   generated remediation plan without further validation.
+ * - `VALIDAR_ANTES`: the saving is real or likely, but risk, effort or partial
+ *   confidence warrant a manual check before acting.
+ * - `SOMENTE_HISTORICO`: the cost this finding once represented has already
+ *   stopped; kept visible for the record, but there is nothing left to execute.
+ * - `INVESTIGAR`: evidence is too weak (low confidence or a heuristic price) to
+ *   act on directly; needs more data before it becomes a recommendation.
+ */
+export const DecisionCategorySchema = z.enum([
+  'EXECUTAVEL_AGORA',
+  'VALIDAR_ANTES',
+  'SOMENTE_HISTORICO',
+  'INVESTIGAR',
+]);
+
+/** How trustworthy the savings figure itself is, independent of execution readiness. */
+export const SavingsStatusSchema = z.enum(['confirmada', 'provavel', 'nao-confirmada']);
+
+export const DecisionSchema = z.object({
+  recommendationId: z.string().min(1),
+  resourceId: z.string().min(1),
+  resourceName: z.string().min(1),
+  category: DecisionCategorySchema,
+  savingsStatus: SavingsStatusSchema,
+  monthlySavings: nonNegativeNumber,
+  reasoning: z.string().min(1),
+});
+
+export const DecisionEngineReportSchema = z.object({
+  decisions: z.array(DecisionSchema),
+  confirmedMonthlySavings: nonNegativeNumber,
+  probableMonthlySavings: nonNegativeNumber,
+  unconfirmedMonthlySavings: nonNegativeNumber,
+  executableNowCount: z.number().int().min(0),
+  summary: z.string().min(1),
+});
+
 export type CostEntry = z.infer<typeof CostEntrySchema>;
 export type CostSummary = z.infer<typeof CostSummarySchema>;
 export type CostTrend = z.infer<typeof CostTrendSchema>;
@@ -390,3 +432,7 @@ export type WafCheck = z.infer<typeof WafCheckSchema>;
 export type WafScorecard = z.infer<typeof WafScorecardSchema>;
 export type StaleRecommendation = z.infer<typeof StaleRecommendationSchema>;
 export type InactionCost = z.infer<typeof InactionCostSchema>;
+export type DecisionCategory = z.infer<typeof DecisionCategorySchema>;
+export type SavingsStatus = z.infer<typeof SavingsStatusSchema>;
+export type Decision = z.infer<typeof DecisionSchema>;
+export type DecisionEngineReport = z.infer<typeof DecisionEngineReportSchema>;

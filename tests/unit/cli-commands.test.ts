@@ -32,6 +32,7 @@ const resourceDetectorMock = vi.hoisted(() => ({
   getInventory: vi.fn(() => mockIdleResources.map((item) => item.resource)),
   detectIdleVMs: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectIdleAppServices: vi.fn(async () => mockIdleResources.slice(0, 1)),
+  detectIdleAppServicePlans: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectIdleStorage: vi.fn(async () => mockIdleResources.slice(1)),
   detectIdleSqlDatabases: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectUnattachedDisks: vi.fn(async () => mockIdleResources.slice(0, 1)),
@@ -96,6 +97,7 @@ describe('CLI command classes', () => {
     resourceDetectorMock.getInventory.mockClear();
     resourceDetectorMock.detectIdleVMs.mockClear();
     resourceDetectorMock.detectIdleAppServices.mockClear();
+    resourceDetectorMock.detectIdleAppServicePlans.mockClear();
     resourceDetectorMock.detectIdleStorage.mockClear();
     resourceDetectorMock.detectIdleSqlDatabases.mockClear();
     resourceDetectorMock.detectUnattachedDisks.mockClear();
@@ -163,6 +165,7 @@ describe('CLI command classes', () => {
     ['all', 'detectAll'],
     ['vm', 'detectIdleVMs'],
     ['app-service', 'detectIdleAppServices'],
+    ['app-service-plan', 'detectIdleAppServicePlans'],
     ['storage', 'detectIdleStorage'],
     ['sql', 'detectIdleSqlDatabases'],
     ['disk', 'detectUnattachedDisks'],

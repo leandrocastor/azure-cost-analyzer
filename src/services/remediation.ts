@@ -227,6 +227,15 @@ export class RemediationService {
       );
     }
 
+    if (coordinates.resourceType.toLowerCase() === 'serverfarms' && recommendation.actionType === 'DELETE') {
+      checks.push(
+        step(
+          'Confirma que o plano continua sem nenhum aplicativo antes de excluí-lo: um valor diferente de 0 aqui significa que a recomendação está desatualizada',
+          `az appservice plan show ${scope} --query "numberOfSites" -o tsv`,
+        ),
+      );
+    }
+
     return checks;
   }
 

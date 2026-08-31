@@ -1,6 +1,7 @@
 import type {
   CostDiff,
   CostSummary,
+  DecisionEngineReport,
   ExecutiveSummary,
   IdleResource,
   InactionCost,
@@ -23,6 +24,7 @@ export type StaticReportData = {
   remediationPlans?: RemediationPlan[];
   waf?: WafScorecard | undefined;
   inaction?: InactionCost | undefined;
+  decisionEngine?: DecisionEngineReport | undefined;
 };
 
 /**
@@ -212,6 +214,46 @@ export const REPORT_CLIENT_SCRIPT = `
       };
 
       const CONFIDENCE_LABELS = { high: 'alta', medium: 'média', low: 'baixa' };
+
+      const DECISION_CATEGORY = {
+        EXECUTAVEL_AGORA: { label: 'Executável agora', cls: 'waf-pass' },
+        VALIDAR_ANTES: { label: 'Validar antes', cls: 'waf-partial' },
+        SOMENTE_HISTORICO: { label: 'Somente histórico', cls: 'waf-na' },
+        INVESTIGAR: { label: 'Investigar', cls: 'waf-fail' },
+      };
+
+      const SAVINGS_STATUS_LABELS = {
+        confirmada: 'Confirmada pela fatura',
+        provavel: 'Provável (preço de lista)',
+        'nao-confirmada': 'Não confirmada',
+      };
+
+      function renderDecisionEngine() {
+        const data = REPORT.decisionEngine;
+        if (!data || !(data.decisions || []).length) return;
+        document.getElementById('decision-section').hidden = false;
+
+        const rows = data.decisions.map(function (decision) {
+          const meta = DECISION_CATEGORY[decision.category] || DECISION_CATEGORY.INVESTIGAR;
+          return '<tr>'
+            + '<td><strong>' + esc(decision.resourceName) + '</strong></td>'
+            + '<td><span class="badge ' + meta.cls + '">' + esc(meta.label) + '</span></td>'
+            + '<td>' + esc(SAVINGS_STATUS_LABELS[decision.savingsStatus] || decision.savingsStatus) + '</td>'
+            + '<td>' + fmtFull(decision.monthlySavings) + '</td>'
+            + '<td class="muted">' + esc(decision.reasoning) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('decision-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + data.executableNowCount + '</span><small>prontas para executar agora</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.confirmedMonthlySavings) + '</span><small>confirmada pela fatura / mês</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.probableMonthlySavings) + '</span><small>provável (preço de lista) / mês</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.unconfirmedMonthlySavings) + '</span><small>não confirmada / mês</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<div class="table-scroll"><table><thead><tr><th>Recurso</th><th>Categoria</th><th>Status da economia</th><th>Economia/mês</th><th>Motivo</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
 
       function renderWaf() {
         const waf = REPORT.waf;
@@ -558,6 +600,7 @@ export const REPORT_CLIENT_SCRIPT = `
       renderKPI('kpi-savings', fmt(REPORT.summary.annualSavingsOpportunity));
 
       renderExecutiveSummary();
+      renderDecisionEngine();
       renderWaf();
       renderInaction();
       renderDiff();
@@ -603,6 +646,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     diff: data.diff ?? null,
     waf: data.waf ?? null,
     inaction: data.inaction ?? null,
+    decisionEngine: data.decisionEngine ?? null,
     remediationPlans: data.remediationPlans ?? [],
   });
 
@@ -962,6 +1006,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
           <div class="sub">Economia estimada se todas as recomendações forem aplicadas</div>
         </div>
       </div>
+
+      <section id="decision-section" hidden>
+        <h2>FinOps Decision Engine</h2>
+        <div class="card">
+          <p class="section-hint">Cada recomendação classificada por prontidão de execução e pela confiabilidade da economia estimada, para separar o que já pode ser executado do que ainda precisa de validação ou de mais evidência.</p>
+          <div id="decision-body"></div>
+        </div>
+      </section>
 
       <section>
         <h2>Recursos Ociosos</h2>

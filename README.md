@@ -8,7 +8,8 @@ Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboa
 
 - Agregação via Azure Cost Management por serviço, grupo de recursos, localização ou tags
 - Análise de tendência de custos, detecção de anomalias e previsão simples
-- Detecção de recursos ociosos para VMs, App Services, Storage, SQL, discos, IPs públicos e load balancers
+- Detecção de recursos ociosos para VMs, App Services, **App Service Plans** (vazios ou subutilizados), Storage, SQL, discos, IPs públicos e load balancers
+- **FinOps Decision Engine**: classifica cada recomendação por prontidão de execução (executável agora, validar antes, investigar, somente histórico) e separa a economia total em confirmada, provável e não confirmada
 - Recomendações de otimização priorizadas com pontuação de ROI, risco e esforço
 - **Sumário executivo automático** em linguagem natural, no topo do relatório
 - **Plano de remediação executável**: comandos `az` prontos, com verificação prévia, rollback e trechos equivalentes em Terraform e Bicep, mais um script `apply-remediation.sh` que roda em modo simulação por padrão
@@ -227,6 +228,20 @@ Um relatório de FinOps só é útil se cada achado resistir ao contraditório d
 
 A economia exibida também é fiel: quando o preço de lista é resolvido, ele é usado **literalmente**, sem multiplicadores ou pisos artificiais que inflavam os valores.
 
+#### App Service Plan como unidade real de cobrança
+
+O App Service é cobrado pelo **plano** (reserva de instâncias de VM pelo tier e pela quantidade de workers), não pelo site individual. Isso significa que um plano pago sem nenhum aplicativo hospedado continua gerando custo total, e um plano cujos aplicativos estão todos ociosos desperdiça a reserva inteira — nenhum dos dois casos aparece analisando apenas os sites um a um.
+
+| Situação no plano | Achado gerado | Ação recomendada |
+| --- | --- | --- |
+| Plano pago com 0 aplicativos hospedados | Órfão confirmado, alta confiança | Excluir o plano (reduzir o tier não eliminaria uma reserva sem uso) |
+| Plano com aplicativos, mas CPU média do plano abaixo de 10% por 7 dias | Subutilização do plano | Reduzir o tier ou consolidar aplicativos em um plano menor |
+| Plano em tier Free, Shared, Consumption ou Flex Consumption | Ignorado | Não há reserva fixa a economizar |
+
+```bash
+cost-analyzer detect --resource-type app-service-plan
+```
+
 #### Conciliação com o custo realmente faturado
 
 A detecção de ociosidade raciocina sobre utilização e preço de lista, o que é uma **projeção** do que o recurso custaria. O Cost Management sabe o que ele **de fato custou**. Quando os dois divergem, a fatura vence:
@@ -267,6 +282,19 @@ Quando o relatório é gerado com `--compare`, as recomendações que continuam 
 ```bash
 cost-analyzer export --period 1 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
 ```
+
+#### FinOps Decision Engine
+
+Nem toda recomendação técnica pode ser executada sem revisão, e nem toda economia estimada tem o mesmo nível de certeza. O Decision Engine cruza cada recomendação com sua evidência e a classifica em uma das quatro categorias, para que a área executiva saiba exatamente o que pode ser aplicado hoje e o que precisa de validação humana antes:
+
+| Categoria | Significado |
+| --- | --- |
+| Executável agora | Risco baixo e economia confirmada pela fatura, ou achado de configuração com alta confiança, risco e esforço baixos |
+| Validar antes | Risco alto, ou a ação depende de confirmação do time responsável pelo recurso |
+| Investigar | Confiança baixa ou base heurística — a evidência não é suficiente para decidir sozinho |
+| Somente histórico | O recurso já parou de gerar custo; não há economia futura a capturar, apenas o registro do que já foi desperdiçado |
+
+A economia total também é dividida por status de confiabilidade — **confirmada** (bate com a fatura), **provável** (achado de configuração de alta confiança) e **não confirmada** (estimativa sem respaldo na fatura) — em vez de somar tudo em um único número otimista.
 
 ## Roadmap
 
