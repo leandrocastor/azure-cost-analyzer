@@ -121,6 +121,52 @@ describe('CostAnalyzerService', () => {
     expect(anomalies).toEqual([]);
   });
 
+  it('aggregates same-month rows into a single total before scoring', () => {
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    // Two rows share the same month (service/resourceGroup breakdown); the
+    // anomaly must be evaluated against the summed month, not each row.
+    const anomalies = service.detectAnomalies([
+      { ...mockCostEntries[0], date: '2026-01', amount: 50 },
+      { ...mockCostEntries[1], date: '2026-01', amount: 50 },
+      { ...mockCostEntries[2], date: '2026-02', amount: 105 },
+      { ...mockCostEntries[3], date: '2026-03', amount: 95 },
+      { ...mockCostEntries[0], date: '2026-04', amount: 100 },
+      { ...mockCostEntries[1], date: '2026-05', amount: 98 },
+      { ...mockCostEntries[2], date: '2026-06', amount: 102 },
+      { ...mockCostEntries[3], date: '2026-07', amount: 97 },
+      { ...mockCostEntries[0], date: '2026-08', amount: 103 },
+      { ...mockCostEntries[1], date: '2026-09', amount: 101 },
+      { ...mockCostEntries[4], date: '2026-10', amount: 300 },
+    ]);
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]?.date).toBe('2026-10');
+    expect(anomalies[0]?.amount).toBe(300);
+  });
+
+  it('attributes the anomaly to the service and resource group that drove it', () => {
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    const baseline = { currency: 'USD', service: 'Compute', resourceGroup: 'rg-a', location: 'eastus', tags: {} };
+    const anomalies = service.detectAnomalies([
+      { ...baseline, date: '2026-01', amount: 100 },
+      { ...baseline, date: '2026-02', amount: 110 },
+      { ...baseline, date: '2026-03', amount: 95 },
+      { ...baseline, date: '2026-04', amount: 105 },
+      { ...baseline, date: '2026-05', amount: 98 },
+      { ...baseline, date: '2026-06', amount: 102 },
+      { ...baseline, date: '2026-07', amount: 97 },
+      { ...baseline, date: '2026-08', amount: 103 },
+      { ...baseline, date: '2026-09', amount: 101 },
+      // Spike concentrated entirely in "Storage"/"rg-b": the report must point there.
+      { date: '2026-10', amount: 300, currency: 'USD', service: 'Storage', resourceGroup: 'rg-b', location: 'westus', tags: {} },
+    ]);
+
+    expect(anomalies).toHaveLength(1);
+    const serviceRootCause = anomalies[0]?.rootCauses.find((item) => item.dimension === 'service');
+    expect(serviceRootCause?.key).toBe('Storage');
+    const rgRootCause = anomalies[0]?.rootCauses.find((item) => item.dimension === 'resourceGroup');
+    expect(rgRootCause?.key).toBe('rg-b');
+  });
+
   it('forecasts future costs', async () => {
     usageMock.mockResolvedValue({
       columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],

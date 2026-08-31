@@ -280,6 +280,157 @@ describe('generateStaticReport — seções de diferenciação', () => {
     expect(html).toContain('id="aging-section" hidden');
   });
 
+  it('renders the forgotten non-production environments section', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      forgottenEnvironments: {
+        resources: [
+          {
+            resourceId: '/subscriptions/sub/resourceGroups/rg-dev/providers/Microsoft.Compute/virtualMachines/vm-test',
+            resourceName: 'vm-test',
+            resourceType: 'Microsoft.Compute/virtualMachines',
+            resourceGroup: 'rg-dev',
+            matchedPattern: 'test',
+            matchedOn: 'name',
+            createdAt: '2024-01-01T00:00:00Z',
+            ageDays: 500,
+            monthlyCost: 200,
+            currency: 'BRL',
+            isIdle: false,
+          },
+        ],
+        totalMonthlyCostAtRisk: 200,
+        resourcesInspected: 20,
+        resourcesWithConfirmedAge: 15,
+        summary: '1 ambiente não produtivo esquecido encontrado.',
+      },
+    });
+
+    expect(html).toContain('"matchedPattern":"test"');
+    expect(html).toContain('Ambientes Não Produtivos Esquecidos');
+  });
+
+  it('keeps the forgotten environments section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"forgottenEnvironments":null');
+    expect(html).toContain('id="forgotten-env-section" hidden');
+  });
+
+  it('renders the governance report section', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      governance: {
+        resourcesInspected: 10,
+        coverage: [
+          { tagKey: 'owner', label: 'Responsável (owner)', presentCount: 6, missingCount: 4, missingPercent: 0.4 },
+        ],
+        worstResourceGroups: [
+          { resourceGroup: 'rg-dev', resourceCount: 5, missingAnyTagCount: 3, missingAnyTagPercent: 0.6 },
+        ],
+        summary: '40% dos 10 recurso(s) inspecionados não têm a tag de responsável.',
+      },
+    });
+
+    expect(html).toContain('Governança de Tags');
+    expect(html).toContain('"resourcesInspected":10');
+  });
+
+  it('keeps the governance section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"governance":null');
+    expect(html).toContain('id="governance-section" hidden');
+  });
+
+  it('renders the unit economics section', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      unitEconomics: {
+        groupTagKey: 'app',
+        entries: [{ key: 'checkout-api', monthlyCost: 500, resourceCount: 3, shareOfTaggedTotal: 1 }],
+        taggedMonthlyCost: 500,
+        untaggedMonthlyCost: 100,
+        untaggedResourceCount: 2,
+        summary: 'R$ 500,00/mês atribuídos via tag "app".',
+      },
+    });
+
+    expect(html).toContain('Unit Economics');
+    expect(html).toContain('"groupTagKey":"app"');
+  });
+
+  it('keeps the unit economics section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"unitEconomics":null');
+    expect(html).toContain('id="unit-economics-section" hidden');
+  });
+
+  it('renders the FinOps maturity score section', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      maturityScore: {
+        score: 62,
+        grade: 'C',
+        dimensions: [
+          {
+            name: 'Otimização de custos (WAF Cost Optimization)',
+            score: 70,
+            weight: 0.35,
+            evidence: '7 de 10 verificações WAF atendidas.',
+          },
+        ],
+        summary: 'Maturidade FinOps intermediária (nota C, 62/100).',
+      },
+    });
+
+    expect(html).toContain('FinOps Maturity Score');
+    expect(html).toContain('"grade":"C"');
+  });
+
+  it('keeps the maturity score section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"maturityScore":null');
+    expect(html).toContain('id="maturity-section" hidden');
+  });
+
+  it('renders the cost anomalies section with root cause', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      anomalies: [
+        {
+          date: '2026-07',
+          amount: 18500,
+          expectedAmount: 12000,
+          deviation: 2.8,
+          severity: 'high',
+          rootCauses: [
+            {
+              dimension: 'service',
+              key: 'Virtual Machines',
+              amountOnAnomalyDate: 9000,
+              averageAmount: 5000,
+              deltaAmount: 4000,
+              shareOfTotalDelta: 0.62,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(html).toContain('Anomalias de Custo com Causa Raiz');
+    expect(html).toContain('"deviation":2.8');
+  });
+
+  it('keeps the anomalies section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"anomalies":[]');
+    expect(html).toContain('id="anomalies-section" hidden');
+  });
+
   it('exposes the evidence that supports each idle finding', () => {
     const html = generateStaticReport({
       ...fullData,

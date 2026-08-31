@@ -11,6 +11,12 @@ Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboa
 - Detecção de recursos ociosos para VMs, App Services, **App Service Plans** (vazios ou subutilizados), Storage, SQL, discos, IPs públicos e load balancers
 - **FinOps Decision Engine**: classifica cada recomendação por prontidão de execução (executável agora, validar antes, investigar, somente histórico) e separa a economia total em confirmada, provável e não confirmada
 - **Recursos Envelhecidos e Sem Dono**: usa o Azure Resource Graph para confirmar a idade real de cada recurso (nunca estimada) e sinaliza os que têm mais de 180 dias, custo faturado real e nenhuma tag de responsável — risco de governança mesmo quando o recurso não está ocioso
+- **Detector de Ambientes Não Produtivos Esquecidos**: identifica recursos de dev/test/homologação/staging (por nome ou tag de ambiente) com idade confirmada via Resource Graph e custo faturado real, para achar o que não é ocioso mas também não deveria mais existir
+- **Anomalias de Custo com Causa Raiz**: além de detectar o mês fora do padrão estatístico, aponta qual serviço ou resource group foi o principal responsável pelo desvio, reaproveitando os mesmos dados de custo já buscados
+- **Relatório de Governança de Tags**: cobertura de tags de responsável, ambiente e centro de custo em todo o inventário, com ranking dos resource groups pior governados
+- **Unit Economics**: custo faturado real agrupado por aplicação/cliente/projeto (via tags já em uso no ambiente), aparecendo apenas quando essa convenção de tags existe
+- **FinOps Maturity Score**: nota de 0 a 100 (com pesos fixos e documentados) que resume otimização de custos, tagging de responsável, tagging de ambiente/centro de custo e controle de recursos envelhecidos/esquecidos em um único indicador executivo
+- **Playbooks seguros de remediação**: cada plano de remediação inclui análise de impacto, critério de sucesso e quando não executar a ação, além de pré-checagem, aplicação e rollback
 - Recomendações de otimização priorizadas com pontuação de ROI, risco e esforço
 - **Sumário executivo automático** em linguagem natural, no topo do relatório
 - **Plano de remediação executável**: comandos `az` prontos, com verificação prévia, rollback e trechos equivalentes em Terraform e Bicep, mais um script `apply-remediation.sh` que roda em modo simulação por padrão
@@ -310,20 +316,45 @@ Ociosidade não é o único risco de FinOps: um recurso pode estar em pleno uso,
 
 O relatório mostra o total de recursos com idade confirmada versus o total inspecionado, o custo mensal em risco e se o recurso também aparece na lista de ociosos — para deixar claro que "envelhecido e sem dono" é uma dimensão de risco independente de "ocioso".
 
+#### Detector de Ambientes Não Produtivos Esquecidos
+
+Um problema comum e caro em muitos ambientes: máquinas e serviços de dev/test/homologação/staging que ninguém mais usa mas continuam sendo cobrados mês após mês. A detecção casa o nome do recurso ou uma tag de ambiente (`environment`, `env`, `ambiente`, `stage`, entre variações comuns em PT/EN) contra uma lista conservadora de padrões conhecidos (`dev`, `test`, `hml`, `homolog`, `staging`, `qa`, `lab`, `poc`, `demo`, `sandbox`, `temp`, `old`, `legacy`, `backup`) e só reporta o recurso quando a idade é confirmada via Azure Resource Graph (nunca estimada) **e** o custo faturado real é maior que zero. Um recurso de teste recém-criado, ou um ambiente não produtivo já sem custo, nunca aparece aqui.
+
+#### Anomalias de Custo com Causa Raiz
+
+A análise de tendência já apontava quando um mês fugia do padrão estatístico da série (desvio-padrão), mas não dizia por quê. Agora, para cada mês anômalo, o relatório reaproveita a mesma quebra de custo por serviço e resource group já buscada no Cost Management — sem nenhuma chamada extra ao Azure — e mostra qual serviço ou resource group foi responsável pela maior parte do desvio, com o valor em excesso e o percentual do desvio total que ele representa.
+
+#### Relatório de Governança de Tags
+
+O Cost Management e o Advisor nativos mostram custo e risco de configuração, mas nunca higiene de tags — uma lacuna que impede showback, chargeback e resposta rápida a incidentes. Esta análise cobre **todo o inventário de recursos** (não apenas os ociosos) e mede a cobertura de três tags de governança — responsável (`owner`), ambiente (`environment`) e centro de custo (`costCenter`) — além de rankear os resource groups com a pior proporção de recursos sem alguma dessas tags.
+
+#### Unit Economics
+
+Quando o ambiente já usa uma convenção de tags para identificar aplicação, cliente ou projeto (`app`, `customer`, `project`, entre variações comuns), o relatório agrupa o custo faturado real por essa tag, mostrando quanto cada unidade de negócio custa por mês e qual fatia do custo etiquetado ela representa. Essa seção **só aparece quando essa convenção de tags já existe no tenant** — nunca é inferida a partir de nomes de recursos, para não arriscar atribuir custo à unidade errada.
+
+#### FinOps Maturity Score
+
+Uma nota única de 0 a 100 (com conceito de A a E) que resume, com pesos fixos e documentados, quatro dimensões já validadas no restante do relatório — nenhum número novo é criado, apenas uma média ponderada transparente:
+
+| Dimensão | Peso | O que mede |
+| --- | --- | --- |
+| Otimização de custos (WAF) | 35% | Nota do Scorecard do Well-Architected Framework |
+| Tagging de responsável (owner) | 25% | Percentual de recursos com tag de owner, via Relatório de Governança |
+| Tagging de ambiente/centro de custo | 20% | Cobertura combinada de `environment` e `costCenter`, via Relatório de Governança |
+| Controle de recursos envelhecidos/esquecidos | 20% | Proporção do inventário inspecionado que aparece como envelhecido/sem dono ou como ambiente não produtivo esquecido |
+
+#### Playbooks seguros de remediação
+
+Cada plano de remediação já trazia pré-checagem, comandos de aplicação e rollback, IaC equivalente em Terraform e Bicep. Agora também traz, para toda ação — não só as de risco alto — uma **análise de impacto** (o que muda no recurso e no que depende dele), o **critério de sucesso** (o que confirma que a ação funcionou, incluindo o lembrete de que a economia só é confirmada na fatura seguinte) e **quando não executar** (ex.: sem backup recente, sem confirmação explícita do time responsável, ou fora de uma janela de manutenção, para ações destrutivas).
+
 ## Roadmap
 
 Próximos diferenciais planejados:
 
 - [ ] **GitHub Action de custo em Pull Request** — comenta no PR o impacto estimado das mudanças de IaC antes do merge
-- [ ] **Unit economics** — custo por cliente, por requisição ou por ambiente, a partir de tags e métricas de aplicação
 - [ ] **Visão multi-tenant consolidada** — um único relatório cobrindo vários tenants, para CSPs e MSPs
 - [ ] **Digest agendado no Teams e no Slack** — resumo periódico com histórico publicado em site estático
-- [ ] **Detecção de anomalias com causa raiz** — identifica qual recurso ou resource group provocou o pico de gasto
-- [ ] **Simulador de compromissos** — compara Reserved Instances, Savings Plans e Spot, com cálculo de payback
-- [ ] **Score de maturidade FinOps** — nota de 0 a 100 para o tenant, com comparação entre execuções
-- [ ] **Detector de ambientes esquecidos** — cruza tags/nomes de dev, test, homolog, lab, poc, demo, temp, old e backup com custo real, idade e ausência de telemetria de acesso
-- [ ] **Relatório de governança** — percentual de recursos sem tag de owner, environment ou costCenter, com ranking dos resource groups piores avaliados
-- [ ] **Playbooks seguros de remediação** — cada ação de remediação passa a ter pré-checagem, análise de impacto, documentação, modo dry-run, plano de rollback, critério de sucesso e critério explícito de quando não executar
+- [ ] **Simulador de compromissos** — compara Reserved Instances, Savings Plans e Spot, com cálculo de payback. Não implementado ainda porque exige dados precisos de horas de uso real (não apenas preço de lista), para não arriscar apresentar números financeiros estimados como se fossem confirmados
 - [ ] **MCP Server** — expõe os achados como ferramentas para agentes de IA, permitindo perguntar "por que meu custo subiu?" direto no GitHub Copilot ou no Claude. Exige instalação local com um cliente MCP (VS Code, Claude Desktop) e, por isso, **não funciona na execução pontual via Azure Cloud Shell**
 
 ## Screenshot do dashboard

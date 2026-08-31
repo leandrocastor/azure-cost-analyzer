@@ -11,6 +11,12 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 - Idle resource detection for VMs, App Services, **App Service Plans** (empty or underutilized), Storage, SQL, disks, public IPs, and load balancers
 - **FinOps Decision Engine**: classifies every recommendation by execution readiness (executable now, validate first, investigate, historical only) and splits total savings into confirmed, probable, and unconfirmed
 - **Aging & Ownerless Resources**: uses Azure Resource Graph to confirm the real creation date of every resource (never estimated) and flags the ones older than 180 days, with real billed cost and no owner tag — a governance risk even when the resource is not idle
+- **Forgotten Non-Production Environments Detector**: identifies dev/test/staging resources (by name or environment tag) with a confirmed age via Resource Graph and real billed cost, to catch what is not idle but also should not still exist
+- **Cost Anomalies with Root Cause**: on top of flagging a statistically abnormal month, it pinpoints which service or resource group was mostly responsible for the deviation, reusing the same cost breakdown already fetched
+- **Tag Governance Report**: coverage of owner, environment, and cost center tags across the entire inventory, with a ranking of the worst-governed resource groups
+- **Unit Economics**: real billed cost grouped by application/customer/project (via tags already in use in the environment), shown only when that tagging convention exists
+- **FinOps Maturity Score**: a 0 to 100 score (with fixed, documented weights) summarizing cost optimization, owner tagging, environment/cost-center tagging, and aging/forgotten resource control into a single executive metric
+- **Safe remediation playbooks**: every remediation plan now includes an impact analysis, a success criterion, and a "when not to run" rule, in addition to pre-checks, apply steps, and rollback
 - Prioritized optimization recommendations with ROI, risk, and effort scoring
 - **Automatic executive summary** in plain language at the top of the report
 - **Executable remediation plan**: ready-to-run `az` commands with pre-checks, rollback and equivalent Terraform/Bicep snippets, plus an `apply-remediation.sh` script that is dry-run by default
@@ -310,20 +316,45 @@ Idle time is not the only FinOps risk: a resource can be in full use, billing re
 
 The report shows the number of resources with confirmed age versus the total inspected, the monthly cost at risk, and whether the resource also appears in the idle list — making clear that "aging and ownerless" is a governance risk dimension independent from "idle".
 
+#### Forgotten Non-Production Environments Detector
+
+A common and costly problem in many environments: dev/test/staging machines and services that nobody uses anymore but keep getting billed month after month. Detection matches the resource name or an environment tag (`environment`, `env`, `ambiente`, `stage`, and other common PT/EN variations) against a conservative list of known non-production patterns (`dev`, `test`, `hml`, `homolog`, `staging`, `qa`, `lab`, `poc`, `demo`, `sandbox`, `temp`, `old`, `legacy`, `backup`) and only reports a resource when its age is confirmed via Azure Resource Graph (never estimated) **and** its real billed cost is greater than zero. A freshly created test resource, or a non-production environment that no longer costs anything, never shows up here.
+
+#### Cost Anomalies with Root Cause
+
+Trend analysis already flagged when a month fell outside the statistical pattern of the series (standard deviation), but it did not say why. Now, for every anomalous month, the report reuses the same cost breakdown by service and resource group already fetched from Cost Management — with no extra Azure call — and shows which service or resource group was mostly responsible for the deviation, including the excess amount and the share of the total deviation it represents.
+
+#### Tag Governance Report
+
+Native Cost Management and Advisor show cost and configuration risk, but never tagging hygiene — a gap that blocks showback, chargeback, and fast incident response. This analysis covers **the entire resource inventory** (not just idle resources) and measures coverage of three governance tags — owner, environment, and cost center — while ranking resource groups by the worst share of resources missing any of these tags.
+
+#### Unit Economics
+
+When the environment already uses a tagging convention to identify an application, customer, or project (`app`, `customer`, `project`, and common variations), the report groups real billed cost by that tag, showing how much each business unit costs per month and its share of the tagged cost. This section **only appears when that tagging convention already exists in the tenant** — it is never inferred from resource names, to avoid attributing cost to the wrong unit.
+
+#### FinOps Maturity Score
+
+A single 0 to 100 score (with an A to E grade) that summarizes, with fixed and documented weights, four dimensions already validated elsewhere in the report — no new number is created, only a transparent weighted average:
+
+| Dimension | Weight | What it measures |
+| --- | --- | --- |
+| Cost optimization (WAF) | 35% | Well-Architected Framework scorecard score |
+| Owner tagging | 25% | Percentage of resources with an owner tag, from the Governance Report |
+| Environment/cost-center tagging | 20% | Combined coverage of `environment` and `costCenter`, from the Governance Report |
+| Aging/forgotten resource control | 20% | Share of the inspected inventory that shows up as aging/ownerless or as a forgotten non-production environment |
+
+#### Safe remediation playbooks
+
+Every remediation plan already included pre-checks, apply commands, rollback, and equivalent Terraform/Bicep IaC. It now also includes, for every action — not just high-risk ones — an **impact analysis** (what changes on the resource and on anything that depends on it), a **success criterion** (what confirms the action worked, including the reminder that savings are only confirmed on the next invoice), and a **"when not to run"** rule (e.g. no recent backup, no explicit confirmation from the owning team, or outside a maintenance window for destructive actions).
+
 ## Roadmap
 
 Planned differentiators:
 
 - [ ] **Cost-in-Pull-Request GitHub Action** — comments the estimated cost impact of IaC changes before merge
-- [ ] **Unit economics** — cost per customer, per request, or per environment, derived from tags and application metrics
 - [ ] **Consolidated multi-tenant view** — a single report covering several tenants, for CSPs and MSPs
 - [ ] **Scheduled Teams and Slack digest** — periodic summary with history published to a static site
-- [ ] **Anomaly detection with root cause** — pinpoints which resource or resource group caused a spend spike
-- [ ] **Commitment simulator** — compares Reserved Instances, Savings Plans, and Spot, including payback
-- [ ] **FinOps maturity score** — a 0 to 100 score for the tenant, tracked across runs
-- [ ] **Forgotten environments detector** — cross-references dev, test, staging, lab, poc, demo, temp, old, and backup tags/names with real cost, age, and lack of access telemetry
-- [ ] **Governance report** — percentage of resources missing an owner, environment, or costCenter tag, with a ranking of the worst-scoring resource groups
-- [ ] **Safe remediation playbooks** — every remediation action gets a pre-check, impact analysis, documentation, dry-run mode, rollback plan, success criteria, and an explicit "when not to run" rule
+- [ ] **Commitment simulator** — compares Reserved Instances, Savings Plans, and Spot, including payback. Not implemented yet because it requires precise real usage-hour data (not just list pricing), to avoid presenting estimated financial figures as if they were confirmed
 - [ ] **MCP Server** — exposes findings as tools for AI agents, so you can ask "why did my cost go up?" straight from GitHub Copilot or Claude. Requires a local install with an MCP client (VS Code, Claude Desktop) and therefore **does not work in the one-off Azure Cloud Shell run**
 
 ## Dashboard screenshot

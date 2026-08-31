@@ -85,6 +85,9 @@ export class RemediationService {
           terraform: this.buildTerraform(recommendation, coordinates),
           bicep: this.buildBicep(recommendation, coordinates),
         },
+        impactAnalysis: this.buildImpactAnalysis(recommendation, coordinates, name),
+        successCriteria: this.buildSuccessCriteria(recommendation, coordinates, name),
+        whenNotToRun: this.buildWhenNotToRun(recommendation, coordinates, name),
       });
     });
   }
@@ -451,5 +454,74 @@ export class RemediationService {
       '// Declare o recurso com o novo SKU no template principal:',
       `//   sku: { name: novoSku }`,
     ].join('\n');
+  }
+
+  /**
+   * Describes what breaks if the action goes wrong, so an operator reviewing the
+   * playbook understands the blast radius before typing APPLY=true.
+   */
+  private buildImpactAnalysis(
+    recommendation: Recommendation,
+    coordinates: ResourceCoordinates,
+    name: string,
+  ): string {
+    const downtimeNote = this.requiresDowntime(recommendation.actionType)
+      ? 'Esta ação causa indisponibilidade do recurso durante a execução.'
+      : 'Esta ação não interrompe o recurso, mas altera sua configuração de cobrança.';
+
+    const templates: Record<ActionType, string> = {
+      DELETE: `A exclusão de ${name} é destrutiva: dados e configuração são perdidos, exceto o que estiver salvo no backup gerado pelo script. Qualquer aplicação ou processo que ainda dependa deste recurso (mesmo sem tráfego visível na janela observada) para de funcionar imediatamente.`,
+      DOWNSIZE: `Reduzir o porte de ${name} diminui a capacidade de CPU/memória/IOPS disponível. Se a ociosidade observada não cobrir picos sazonais (fechamento de mês, campanhas), o recurso pode ficar subdimensionado após a mudança.`,
+      CHANGE_SKU: `A troca de SKU/tier de ${name} pode remover recursos do tier atual (SLA, redundância, features) que a aplicação dependa, mesmo que o custo caia.`,
+      SCHEDULE: `Agendar o desligamento de ${name} interrompe qualquer processo em execução no horário programado, incluindo jobs, sessões de usuário ou integrações que rodem fora do horário comercial.`,
+      MIGRATE: `Migrar ${name} exige revalidar strings de conexão, identidades gerenciadas e regras de rede; uma migração incompleta pode deixar aplicações apontando para o recurso antigo.`,
+      CLEANUP: `${name} aparenta ser um recurso órfão (sem associação ativa). Removê-lo é seguro apenas se a checagem de dependências no pré-check não encontrar nenhuma referência ativa.`,
+    };
+
+    return `${templates[recommendation.actionType]} ${downtimeNote} Resource group: ${coordinates.resourceGroup}.`;
+  }
+
+  /**
+   * States, in plain language, how to confirm the action actually worked —
+   * without this, "ran the script" and "achieved the saving" are too easily
+   * conflated.
+   */
+  private buildSuccessCriteria(
+    _recommendation: Recommendation,
+    coordinates: ResourceCoordinates,
+    name: string,
+  ): string {
+    const scope = `az resource show --ids <resourceId> --query "properties.provisioningState"`;
+    return `Sucesso confirmado quando: (1) o comando de aplicação retornar sem erro; (2) ${scope} não encontrar mais o recurso ${name} (ações DELETE/CLEANUP) ou mostrar o novo SKU/estado esperado (demais ações); (3) a próxima fatura do Cost Management para o resource group ${coordinates.resourceGroup} refletir a redução esperada — a economia só está confirmada quando aparecer na fatura seguinte, não no momento da execução.`;
+  }
+
+  /**
+   * States, explicitly, when an operator should refuse to run this playbook
+   * even though the recommendation exists — the guardrail a generic remediation
+   * script never expresses.
+   */
+  private buildWhenNotToRun(
+    recommendation: Recommendation,
+    coordinates: ResourceCoordinates,
+    name: string,
+  ): string {
+    const reasons: string[] = [
+      `A checagem prévia (pré-check) mostrar bloqueios (locks) ativos no recurso.`,
+      `Houver dependências ativas apontando para ${name} que a checagem prévia não conseguiu confirmar como seguras.`,
+    ];
+
+    if (recommendation.actionType === 'DELETE' || recommendation.actionType === 'CLEANUP') {
+      reasons.push('Não houver um backup recente e validado do recurso ou dos dados que ele contém.');
+    }
+
+    if (recommendation.risk === 'high') {
+      reasons.push('Não houver confirmação explícita do time responsável pelo recurso — risco classificado como alto exige validação humana, não apenas a leitura deste relatório.');
+    }
+
+    if (coordinates.resourceType.toLowerCase() === 'virtualmachines' || coordinates.resourceType.toLowerCase() === 'sites') {
+      reasons.push('O recurso apresentar utilização recente acima do esperado na checagem prévia de métricas — a recomendação pode estar desatualizada.');
+    }
+
+    return `Não execute esta ação se: ${reasons.join(' ')}`;
   }
 }

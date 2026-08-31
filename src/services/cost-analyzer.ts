@@ -2,12 +2,13 @@ import { CostManagementClient } from '@azure/arm-costmanagement';
 
 import type {
   CostAnomaly,
+  CostAnomalyRootCause,
   CostEntry,
   CostForecast,
   CostSummary,
   CostTrend,
 } from '@/models';
-import { CostEntrySchema, CostForecastSchema, CostSummarySchema, CostTrendSchema } from '@/models';
+import { CostAnomalySchema, CostEntrySchema, CostForecastSchema, CostSummarySchema, CostTrendSchema } from '@/models';
 import { AzureClientService } from '@/services/azure-client';
 import { Cache } from '@/utils/cache';
 import { AzureApiError } from '@/utils/errors';
@@ -306,8 +307,10 @@ export class CostAnalyzerService {
 
   /**
    * Returns normalized daily cost entries for the requested trailing month window.
+   * Accepts an explicit subscription id override so tenant-wide runs can query
+   * each subscription in turn, the same way queryCosts/queryResourceCosts do.
    */
-  public async getCostsByPeriod(months: number): Promise<CostEntry[]> {
+  public async getCostsByPeriod(months: number, subscriptionId?: string): Promise<CostEntry[]> {
     const now = new Date();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(0, months - 1), 1));
     const client = new CostManagementClient(
@@ -320,7 +323,7 @@ export class CostAnalyzerService {
         async () => {
           await this.qpuLimiter.acquire(qpuCost);
           try {
-            return await client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId()}`, {
+            return await client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId(subscriptionId)}`, {
               type: 'ActualCost',
               timeframe: 'Custom',
               timePeriod: {
@@ -380,37 +383,132 @@ export class CostAnalyzerService {
   }
 
   /**
-   * Detects anomalous cost spikes using a z-score threshold above 2.
+   * Detects anomalous cost spikes using a z-score threshold above 2, aggregating
+   * entries to real per-month totals first (the raw entries are broken down by
+   * service and resource group, so summing every row for a month is what yields
+   * the actual monthly total).
    */
   public detectAnomalies(entries: CostEntry[]): CostAnomaly[] {
-    if (entries.length < 2) {
+    const monthlyTotals = this.sumByKey(entries, (entry) => entry.date);
+    const months = [...monthlyTotals.keys()].sort();
+    if (months.length < 2) {
       return [];
     }
 
-    const average = entries.reduce((sum, entry) => sum + entry.amount, 0) / entries.length;
-    const variance = entries.reduce((sum, entry) => sum + (entry.amount - average) ** 2, 0) / entries.length;
+    const amounts = months.map((month) => monthlyTotals.get(month) ?? 0);
+    const average = amounts.reduce((sum, amount) => sum + amount, 0) / amounts.length;
+    const variance = amounts.reduce((sum, amount) => sum + (amount - average) ** 2, 0) / amounts.length;
     const standardDeviation = Math.sqrt(variance);
 
     if (standardDeviation === 0) {
       return [];
     }
 
-    return entries
-      .map((entry) => {
-        const deviation = (entry.amount - average) / standardDeviation;
+    // Root causes are attributed only from the breakdown already present in
+    // the same entries used to detect the spike: no extra Azure call, and
+    // nothing beyond what the billing data itself shows.
+    const byServicePerMonth = this.sumByMonthAndKey(entries, (entry) => entry.service);
+    const byResourceGroupPerMonth = this.sumByMonthAndKey(entries, (entry) => entry.resourceGroup);
+
+    return months
+      .map((month) => {
+        const amount = monthlyTotals.get(month) ?? 0;
+        const deviation = (amount - average) / standardDeviation;
         if (deviation <= 2) {
           return null;
         }
 
+        const rootCauses = [
+          ...this.buildRootCauses('service', month, byServicePerMonth, amount - average),
+          ...this.buildRootCauses('resourceGroup', month, byResourceGroupPerMonth, amount - average),
+        ];
+
         return {
-          date: entry.date,
-          amount: entry.amount,
+          date: month,
+          amount,
           expectedAmount: average,
           deviation,
           severity: deviation > 3 ? 'high' : deviation > 2.5 ? 'medium' : 'low',
+          rootCauses,
         } satisfies CostAnomaly;
       })
-      .filter((item): item is CostAnomaly => item !== null);
+      .filter((item): item is CostAnomaly => item !== null)
+      .map((item) => CostAnomalySchema.parse(item));
+  }
+
+  /**
+   * Sums entry amounts grouped by an arbitrary key extractor.
+   */
+  private sumByKey(entries: CostEntry[], keyOf: (entry: CostEntry) => string): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const entry of entries) {
+      const key = keyOf(entry);
+      totals.set(key, (totals.get(key) ?? 0) + entry.amount);
+    }
+    return totals;
+  }
+
+  /**
+   * Sums entry amounts grouped by month and then by an arbitrary dimension key,
+   * used to attribute an anomalous month's spike to the service or resource
+   * group that drove it.
+   */
+  private sumByMonthAndKey(
+    entries: CostEntry[],
+    keyOf: (entry: CostEntry) => string,
+  ): Map<string, Map<string, number>> {
+    const byMonth = new Map<string, Map<string, number>>();
+    for (const entry of entries) {
+      const key = keyOf(entry);
+      const bucket = byMonth.get(entry.date) ?? new Map<string, number>();
+      bucket.set(key, (bucket.get(key) ?? 0) + entry.amount);
+      byMonth.set(entry.date, bucket);
+    }
+    return byMonth;
+  }
+
+  /**
+   * Finds which keys of a dimension (service or resource group) contributed the
+   * most to the delta between an anomalous month and the average, ranked by
+   * absolute contribution and capped to the top 2 so the report stays readable.
+   */
+  private buildRootCauses(
+    dimension: 'service' | 'resourceGroup',
+    anomalyMonth: string,
+    byMonthAndKey: Map<string, Map<string, number>>,
+    totalDelta: number,
+  ): CostAnomalyRootCause[] {
+    const monthsWithData = [...byMonthAndKey.entries()];
+    const anomalyBucket = byMonthAndKey.get(anomalyMonth);
+    if (!anomalyBucket || monthsWithData.length < 2 || totalDelta === 0) {
+      return [];
+    }
+
+    const otherMonths = monthsWithData.filter(([month]) => month !== anomalyMonth);
+    const keys = new Set(monthsWithData.flatMap(([, bucket]) => [...bucket.keys()]));
+
+    const contributions = [...keys]
+      .map((key) => {
+        const amountOnAnomalyDate = anomalyBucket.get(key) ?? 0;
+        const averageAmount =
+          otherMonths.length > 0
+            ? otherMonths.reduce((sum, [, bucket]) => sum + (bucket.get(key) ?? 0), 0) / otherMonths.length
+            : 0;
+        const deltaAmount = amountOnAnomalyDate - averageAmount;
+        return { key, amountOnAnomalyDate, averageAmount, deltaAmount };
+      })
+      .filter((item) => item.deltaAmount > 0)
+      .sort((left, right) => right.deltaAmount - left.deltaAmount)
+      .slice(0, 2);
+
+    return contributions.map((item) => ({
+      dimension,
+      key: item.key,
+      amountOnAnomalyDate: Number(item.amountOnAnomalyDate.toFixed(2)),
+      averageAmount: Number(item.averageAmount.toFixed(2)),
+      deltaAmount: Number(item.deltaAmount.toFixed(2)),
+      shareOfTotalDelta: Number(Math.min(1, Math.max(0, item.deltaAmount / totalDelta)).toFixed(4)),
+    }));
   }
 
   /**

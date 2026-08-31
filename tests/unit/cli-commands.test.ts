@@ -28,6 +28,8 @@ const azureClientMock = vi.hoisted(() => ({
 const costAnalyzerMock = vi.hoisted(() => ({
   queryCosts: vi.fn(async () => mockCostSummary),
   queryResourceCosts: vi.fn(async () => ({ currency: mockCostSummary.currency, months: [], resources: {} })),
+  getCostsByPeriod: vi.fn(async () => []),
+  detectAnomalies: vi.fn(() => []),
 }));
 const resourceGraphMock = vi.hoisted(() => ({
   getCreationTimes: vi.fn(async () => new Map()),
@@ -103,6 +105,8 @@ describe('CLI command classes', () => {
     azureClientMock.getConfiguredSubscriptionId.mockClear();
     azureClientMock.listAccessibleSubscriptions.mockClear();
     costAnalyzerMock.queryCosts.mockClear();
+    costAnalyzerMock.getCostsByPeriod.mockClear();
+    costAnalyzerMock.detectAnomalies.mockClear();
     resourceDetectorMock.detectAll.mockClear();
     resourceDetectorMock.getInventory.mockClear();
     resourceDetectorMock.detectIdleVMs.mockClear();
@@ -124,6 +128,8 @@ describe('CLI command classes', () => {
       { id: 'sub-b', displayName: 'Subscription B' },
     ]);
     costAnalyzerMock.queryCosts.mockResolvedValue(mockCostSummary);
+    costAnalyzerMock.getCostsByPeriod.mockResolvedValue([]);
+    costAnalyzerMock.detectAnomalies.mockReturnValue([]);
     resourceDetectorMock.detectAll.mockResolvedValue(mockIdleResources);
     optimizerMock.generateRecommendations.mockResolvedValue(mockRecommendations);
     if (existsSync(outputPath)) {

@@ -1,14 +1,19 @@
 import type {
   AgingReport,
+  CostAnomaly,
   CostDiff,
   CostSummary,
   DecisionEngineReport,
   ExecutiveSummary,
+  FinOpsMaturityScore,
+  ForgottenEnvironmentReport,
+  GovernanceReport,
   IdleResource,
   InactionCost,
   OwnershipReport,
   Recommendation,
   RemediationPlan,
+  UnitEconomicsReport,
   WafScorecard,
 } from '@/models';
 
@@ -27,7 +32,13 @@ export type StaticReportData = {
   inaction?: InactionCost | undefined;
   decisionEngine?: DecisionEngineReport | undefined;
   aging?: AgingReport | undefined;
+  forgottenEnvironments?: ForgottenEnvironmentReport | undefined;
+  governance?: GovernanceReport | undefined;
+  unitEconomics?: UnitEconomicsReport | undefined;
+  maturityScore?: FinOpsMaturityScore | undefined;
+  anomalies?: CostAnomaly[];
 };
+
 
 /**
  * Escapes JSON so it can be safely embedded inside an inline `<script>` tag.
@@ -281,6 +292,134 @@ export const REPORT_CLIENT_SCRIPT = `
           + '</div>'
           + '<p class="muted">' + esc(data.summary) + '</p>'
           + '<div class="table-scroll"><table><thead><tr><th>Recurso</th><th>Resource Group</th><th>Idade confirmada</th><th>Custo faturado/mês</th><th>Também ocioso?</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderForgottenEnvironments() {
+        const data = REPORT.forgottenEnvironments;
+        if (!data || !(data.resources || []).length) return;
+        document.getElementById('forgotten-env-section').hidden = false;
+
+        const rows = data.resources.map(function (item) {
+          const years = (item.ageDays / 365).toFixed(1);
+          return '<tr>'
+            + '<td><strong>' + esc(item.resourceName) + '</strong><div class="muted">' + esc(item.resourceType) + '</div></td>'
+            + '<td>' + esc(item.resourceGroup) + '</td>'
+            + '<td>' + esc(item.matchedPattern) + ' <span class="muted">(' + (item.matchedOn === 'tag' ? 'tag ' + esc(item.matchedTagKey || '') : 'nome') + ')</span></td>'
+            + '<td>' + item.ageDays + ' dias (~' + years + ' anos)</td>'
+            + '<td>' + fmtFull(item.monthlyCost) + ' ' + esc(item.currency) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('forgotten-env-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + data.resources.length + '</span><small>ambientes não produtivos esquecidos</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.totalMonthlyCostAtRisk) + '</span><small>custo faturado/mês em risco</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<div class="table-scroll"><table><thead><tr><th>Recurso</th><th>Resource Group</th><th>Padrão identificado</th><th>Idade confirmada</th><th>Custo faturado/mês</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderGovernance() {
+        const data = REPORT.governance;
+        if (!data || data.resourcesInspected === 0) return;
+        document.getElementById('governance-section').hidden = false;
+
+        const coverageRows = (data.coverage || []).map(function (item) {
+          return '<tr>'
+            + '<td>' + esc(item.label) + '</td>'
+            + '<td>' + item.presentCount + '</td>'
+            + '<td>' + item.missingCount + '</td>'
+            + '<td>' + (item.missingPercent * 100).toFixed(0) + '%</td>'
+            + '</tr>';
+        }).join('');
+
+        const rankingRows = (data.worstResourceGroups || []).map(function (item) {
+          return '<tr>'
+            + '<td>' + esc(item.resourceGroup) + '</td>'
+            + '<td>' + item.resourceCount + '</td>'
+            + '<td>' + item.missingAnyTagCount + '</td>'
+            + '<td>' + (item.missingAnyTagPercent * 100).toFixed(0) + '%</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('governance-body').innerHTML =
+          '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<h3 class="subheading">Cobertura de tags (' + data.resourcesInspected + ' recursos inspecionados)</h3>'
+          + '<div class="table-scroll"><table><thead><tr><th>Tag</th><th>Com tag</th><th>Sem tag</th><th>% sem tag</th></tr></thead><tbody>' + coverageRows + '</tbody></table></div>'
+          + (rankingRows
+              ? '<h3 class="subheading">Resource groups com pior governança</h3><div class="table-scroll"><table><thead><tr><th>Resource Group</th><th>Recursos</th><th>Sem alguma tag</th><th>% sem alguma tag</th></tr></thead><tbody>' + rankingRows + '</tbody></table></div>'
+              : '');
+      }
+
+      function renderUnitEconomics() {
+        const data = REPORT.unitEconomics;
+        if (!data || !(data.entries || []).length) return;
+        document.getElementById('unit-economics-section').hidden = false;
+
+        const rows = data.entries.map(function (item) {
+          return '<tr>'
+            + '<td><strong>' + esc(item.key) + '</strong></td>'
+            + '<td>' + fmtFull(item.monthlyCost) + '</td>'
+            + '<td>' + item.resourceCount + '</td>'
+            + '<td>' + (item.shareOfTaggedTotal * 100).toFixed(1) + '%</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('unit-economics-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.taggedMonthlyCost) + '</span><small>custo/mês atribuído por "' + esc(data.groupTagKey) + '"</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.untaggedMonthlyCost) + '</span><small>custo/mês sem essa tag (' + data.untaggedResourceCount + ' recursos)</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<div class="table-scroll"><table><thead><tr><th>' + esc(data.groupTagKey) + '</th><th>Custo/mês</th><th>Recursos</th><th>% do custo etiquetado</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderMaturityScore() {
+        const data = REPORT.maturityScore;
+        if (!data) return;
+        document.getElementById('maturity-section').hidden = false;
+
+        const rows = data.dimensions.map(function (item) {
+          return '<tr>'
+            + '<td>' + esc(item.name) + '</td>'
+            + '<td>' + item.score.toFixed(0) + '/100</td>'
+            + '<td>' + (item.weight * 100).toFixed(0) + '%</td>'
+            + '<td class="muted">' + esc(item.evidence) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('maturity-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + data.score.toFixed(0) + '</span><small>score de maturidade FinOps (0-100)</small></div>'
+          + '<div class="inaction-kpi"><span>' + esc(data.grade) + '</span><small>nota</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<div class="table-scroll"><table><thead><tr><th>Dimensão</th><th>Score</th><th>Peso</th><th>Evidência</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderAnomalies() {
+        const data = REPORT.anomalies || [];
+        if (!data.length) return;
+        document.getElementById('anomalies-section').hidden = false;
+
+        const SEVERITY_LABELS = { high: 'Alta', medium: 'Média', low: 'Baixa' };
+        const rows = data.map(function (item) {
+          const causes = (item.rootCauses || []).map(function (cause) {
+            return esc(cause.key) + ' (' + (cause.dimension === 'service' ? 'serviço' : 'resource group') + '): '
+              + fmtFull(cause.deltaAmount) + ' a mais que a média, ' + (cause.shareOfTotalDelta * 100).toFixed(0) + '% do desvio';
+          }).join('; ');
+          const sevCls = item.severity === 'high' ? 'waf-fail' : item.severity === 'medium' ? 'waf-partial' : 'waf-na';
+          return '<tr>'
+            + '<td>' + esc(item.date) + '</td>'
+            + '<td>' + fmtFull(item.amount) + '</td>'
+            + '<td>' + fmtFull(item.expectedAmount) + '</td>'
+            + '<td><span class="badge ' + sevCls + '">' + esc(SEVERITY_LABELS[item.severity] || item.severity) + '</span></td>'
+            + '<td class="muted">' + (causes || 'Sem detalhamento de causa disponível.') + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('anomalies-body').innerHTML =
+          '<div class="table-scroll"><table><thead><tr><th>Mês</th><th>Custo real</th><th>Custo esperado</th><th>Severidade</th><th>Causa raiz</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       }
 
       function renderWaf() {
@@ -630,6 +769,11 @@ export const REPORT_CLIENT_SCRIPT = `
       renderExecutiveSummary();
       renderDecisionEngine();
       renderAging();
+      renderForgottenEnvironments();
+      renderAnomalies();
+      renderMaturityScore();
+      renderGovernance();
+      renderUnitEconomics();
       renderWaf();
       renderInaction();
       renderDiff();
@@ -677,6 +821,11 @@ export const generateStaticReport = (data: StaticReportData): string => {
     inaction: data.inaction ?? null,
     decisionEngine: data.decisionEngine ?? null,
     aging: data.aging ?? null,
+    forgottenEnvironments: data.forgottenEnvironments ?? null,
+    governance: data.governance ?? null,
+    unitEconomics: data.unitEconomics ?? null,
+    maturityScore: data.maturityScore ?? null,
+    anomalies: data.anomalies ?? [],
     remediationPlans: data.remediationPlans ?? [],
   });
 
@@ -832,6 +981,8 @@ export const generateStaticReport = (data: StaticReportData): string => {
       .badge.waf-partial { background: rgba(250,204,21,0.14); color: var(--yellow); }
       .badge.waf-fail { background: rgba(248,113,113,0.14); color: var(--red); }
       .badge.waf-na { background: var(--surface3); color: var(--muted); }
+
+      .subheading { font-size: 1rem; margin: 1.25rem 0 0.6rem; color: var(--text); }
 
       .score-bar { display: flex; align-items: center; gap: 0.5rem; }
       .score-bar-inner { height: 6px; border-radius: 3px; background: linear-gradient(90deg, var(--accent), var(--purple)); min-width: 4px; }
@@ -1050,6 +1201,46 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="card">
           <p class="section-hint">Recursos com idade confirmada via Azure Resource Graph (nunca estimada), sem tag de responsável e ainda gerando custo faturado. Diferente de ociosidade: um recurso aqui listado pode estar em pleno uso e ainda ser um risco de governança, porque ninguém pode ser consultado antes de removê-lo, renovar um certificado ou reagir a um incidente.</p>
           <div id="aging-body"></div>
+        </div>
+      </section>
+
+      <section id="forgotten-env-section" hidden>
+        <h2>Ambientes Não Produtivos Esquecidos</h2>
+        <div class="card">
+          <p class="section-hint">Recursos identificados como dev/test/homologação/staging (por nome ou tag de ambiente), com idade confirmada via Resource Graph e custo faturado real — nunca uma estimativa. Um problema comum e caro em muitos ambientes: ambientes de teste que ninguém mais usa mas continuam sendo cobrados mês após mês.</p>
+          <div id="forgotten-env-body"></div>
+        </div>
+      </section>
+
+      <section id="anomalies-section" hidden>
+        <h2>Anomalias de Custo com Causa Raiz</h2>
+        <div class="card">
+          <p class="section-hint">Meses com custo fora do padrão estatístico da série, com a causa raiz (serviço ou resource group responsável pela maior parte do desvio) obtida a partir dos mesmos dados de custo já buscados — nenhuma chamada extra ao Azure nem estimativa nova.</p>
+          <div id="anomalies-body"></div>
+        </div>
+      </section>
+
+      <section id="maturity-section" hidden>
+        <h2>FinOps Maturity Score</h2>
+        <div class="card">
+          <p class="section-hint">Uma nota única de 0 a 100 que resume, com pesos fixos e documentados, quatro métricas já validadas no restante deste relatório: otimização de custos (WAF), tagging de responsável, tagging de ambiente/centro de custo e controle de recursos envelhecidos/esquecidos. Nenhum número novo é criado aqui — apenas uma média ponderada transparente.</p>
+          <div id="maturity-body"></div>
+        </div>
+      </section>
+
+      <section id="governance-section" hidden>
+        <h2>Governança de Tags</h2>
+        <div class="card">
+          <p class="section-hint">Cobertura das tags que viabilizam showback, chargeback e resposta a incidentes — responsável, ambiente e centro de custo — e o ranking dos resource groups com pior governança. Uma lacuna que o Cost Management e o Advisor nativos não mostram.</p>
+          <div id="governance-body"></div>
+        </div>
+      </section>
+
+      <section id="unit-economics-section" hidden>
+        <h2>Unit Economics</h2>
+        <div class="card">
+          <p class="section-hint">Custo faturado real agrupado pela tag de aplicação/cliente/projeto em uso no ambiente (ex.: app, customer, project), permitindo enxergar quanto cada unidade de negócio custa por mês. Aparece apenas quando essa convenção de tags já existe no ambiente — nunca é inferida ou inventada.</p>
+          <div id="unit-economics-body"></div>
         </div>
       </section>
 
