@@ -223,6 +223,7 @@ A FinOps report is only useful when every finding survives pushback from the inf
 | Basic dynamic public IP | Skipped: not billed |
 | Basic Load Balancer | Skipped: not billed |
 | App Service on Free, Shared, Dynamic, or FlexConsumption tiers | Skipped: no fixed cost to save |
+| App Service Plan with a stale `numberOfSites` counter | Confirmed via a real listing of the plan's apps before declaring an orphan; never reported from the counter alone |
 | Azure SQL `master` database | Skipped: system database |
 | Public IP bound to a NAT Gateway or Prefix | Not orphaned, even without an `ipConfiguration` |
 
@@ -237,6 +238,8 @@ App Service is billed at the **plan** level (a reservation of VM instances by ti
 | Paid plan with 0 hosted apps | Confirmed orphan, high confidence | Delete the plan (scaling down would still leave an unused reservation) |
 | Plan with apps, but plan-wide average CPU below 10% over 7 days | Plan underutilization | Scale the plan down or consolidate apps into a smaller plan |
 | Plan on Free, Shared, Consumption, or Flex Consumption tier | Skipped | No fixed reservation to save |
+
+> **The app count is always confirmed independently.** The `numberOfSites` field returned by the Azure plans listing is known to be stale or read zero even when the plan has apps deployed. So before declaring a plan an orphan, the report queries the actual list of apps bound to the plan (the same source the Azure Portal uses). If that confirmation cannot be made (for example, missing permission), the finding is **dropped** — it is never reported based on a counter that could be wrong.
 
 ```bash
 cost-analyzer detect --resource-type app-service-plan

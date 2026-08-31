@@ -223,6 +223,7 @@ Um relatório de FinOps só é útil se cada achado resistir ao contraditório d
 | Public IP Basic dinâmico | Ignorado: não é cobrado |
 | Load Balancer Basic | Ignorado: não é cobrado |
 | App Service em tier Free, Shared, Dynamic ou FlexConsumption | Ignorado: não há custo fixo a economizar |
+| App Service Plan com contador de apps (`numberOfSites`) desatualizado | Confirmado via listagem real de apps do plano antes de declarar órfão; nunca reportado só pelo contador |
 | Banco `master` do Azure SQL | Ignorado: é um banco de sistema |
 | Public IP associado a NAT Gateway ou Prefix | Não é órfão, mesmo sem `ipConfiguration` |
 
@@ -237,6 +238,8 @@ O App Service é cobrado pelo **plano** (reserva de instâncias de VM pelo tier 
 | Plano pago com 0 aplicativos hospedados | Órfão confirmado, alta confiança | Excluir o plano (reduzir o tier não eliminaria uma reserva sem uso) |
 | Plano com aplicativos, mas CPU média do plano abaixo de 10% por 7 dias | Subutilização do plano | Reduzir o tier ou consolidar aplicativos em um plano menor |
 | Plano em tier Free, Shared, Consumption ou Flex Consumption | Ignorado | Não há reserva fixa a economizar |
+
+> **A contagem de aplicativos é sempre confirmada de forma independente.** O campo `numberOfSites` retornado pela listagem de planos do Azure é conhecido por ficar desatualizado ou zerado mesmo quando o plano tem aplicativos implantados. Por isso, antes de declarar um plano como órfão, o relatório consulta a lista real de apps vinculados ao plano (a mesma fonte usada pelo Portal do Azure). Se essa confirmação não puder ser feita (por exemplo, falta de permissão), o achado é **descartado**, nunca reportado com base em um dado que pode estar errado.
 
 ```bash
 cost-analyzer detect --resource-type app-service-plan
