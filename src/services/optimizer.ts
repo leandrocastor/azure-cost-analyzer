@@ -66,7 +66,27 @@ const BILLING_RATIONALES: { match: (resourceType: string) => boolean; action: Ac
       documentationUrl: 'https://learn.microsoft.com/azure/azure-sql/database/serverless-tier-overview',
     },
   },
+  {
+    match: (type) => type.toLowerCase().includes('serverfarms'),
+    action: 'DOWNSIZE',
+    rationale: {
+      billingModel: 'O App Service Plan reserva instâncias de VM pelo tier e pela quantidade de workers configurada, cobrando integralmente por essa reserva independentemente do uso agregado dos aplicativos que hospeda.',
+      whySaves: 'Reduzir o tier do plano, reduzir a quantidade de workers ou consolidar os aplicativos em um plano menor reduz a reserva cobrada.',
+      documentationUrl: 'https://learn.microsoft.com/azure/app-service/app-service-plan-manage#pricing-tiers',
+    },
+  },
 ];
+
+/**
+ * Billing rationale for a plan with zero applications: the reservation is
+ * charged in full with no application to justify it, so deleting the plan
+ * (not just downsizing it) is the action that actually removes the cost.
+ */
+const ORPHAN_APP_SERVICE_PLAN_RATIONALE: BillingRationale = {
+  billingModel: 'Um App Service Plan continua reservando e cobrando as instâncias de VM configuradas mesmo sem nenhum aplicativo implantado nele.',
+  whySaves: 'A economia só se confirma excluindo o plano; reduzir o tier de um plano vazio ainda deixaria uma reserva sem uso.',
+  documentationUrl: 'https://learn.microsoft.com/azure/app-service/app-service-plan-manage#delete-an-app-service-plan',
+};
 
 /**
  * Billing rationale for a stopped VM, whose correct action differs from a running one:
@@ -251,6 +271,12 @@ export class OptimizerService {
       return /desligada|deallocated/i.test(reason)
         ? { actionType: 'CLEANUP', rationale: STOPPED_VM_RATIONALE }
         : { actionType: 'DOWNSIZE', rationale: RUNNING_VM_RATIONALE };
+    }
+
+    // A plan with zero apps has nothing left to downsize into: the whole
+    // reservation is waste, so the action that saves money is deleting it.
+    if (resourceType.toLowerCase().includes('serverfarms') && /sem nenhum aplicativo/i.test(reason)) {
+      return { actionType: 'DELETE', rationale: ORPHAN_APP_SERVICE_PLAN_RATIONALE };
     }
 
     const entry = BILLING_RATIONALES.find((candidate) => candidate.match(resourceType));

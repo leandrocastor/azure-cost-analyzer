@@ -6,6 +6,7 @@ const metricsListMock = vi.fn();
 const vmListAllMock = vi.fn();
 const disksListMock = vi.fn();
 const webAppsListMock = vi.fn();
+const appServicePlansListMock = vi.fn();
 const storageListMock = vi.fn();
 const sqlServersListMock = vi.fn();
 const sqlDatabasesListByServerMock = vi.fn();
@@ -48,7 +49,7 @@ vi.mock('@azure/arm-sql', () => ({
 }));
 vi.mock('@azure/arm-appservice', () => ({
   WebSiteManagementClient: vi.fn(function () {
-    return { webApps: { list: webAppsListMock } };
+    return { webApps: { list: webAppsListMock }, appServicePlans: { list: appServicePlansListMock } };
   }),
 }));
 
@@ -98,6 +99,8 @@ describe('ResourceDetectorService', () => {
     vmListAllMock.mockReset();
     disksListMock.mockReset();
     webAppsListMock.mockReset();
+    appServicePlansListMock.mockReset();
+    appServicePlansListMock.mockReturnValue(iterable([]));
     storageListMock.mockReset();
     sqlServersListMock.mockReset();
     sqlDatabasesListByServerMock.mockReset();
@@ -173,6 +176,7 @@ describe('ResourceDetectorService', () => {
     vmListAllMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/virtualMachines/vm-a', name: 'vm-a', location: 'eastus', properties: {} }]));
     disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', diskState: 'Unattached' }]));
     webAppsListMock.mockReturnValue(iterable([]));
+    appServicePlansListMock.mockReturnValue(iterable([]));
     storageListMock.mockReturnValue(iterable([]));
     sqlServersListMock.mockReturnValue(iterable([]));
     publicIpListAllMock.mockReturnValue(iterable([]));
@@ -622,6 +626,87 @@ describe('ResourceDetectorService', () => {
       const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServices();
 
       expect(items).toHaveLength(1);
+    });
+
+    it('flags a paid App Service Plan with zero apps as a confirmed orphan', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-empty',
+            name: 'plan-empty',
+            location: 'eastus',
+            sku: { name: 'S1', tier: 'Standard' },
+            numberOfSites: 0,
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toContain('sem nenhum aplicativo');
+      expect(items[0]?.evidence.dataPoints).toBe(0);
+    });
+
+    it('does not flag a Free tier plan with zero apps, which carries no reserved cost', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-free',
+            name: 'plan-free',
+            location: 'eastus',
+            sku: { name: 'F1', tier: 'Free' },
+            numberOfSites: 0,
+          },
+        ]),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('flags a plan whose hosted apps are all consistently idle', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-underused',
+            name: 'plan-underused',
+            location: 'eastus',
+            sku: { name: 'S1', tier: 'Standard' },
+            numberOfSites: 2,
+          },
+        ]),
+      );
+      metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
+        options.metricnames === 'CpuPercentage' ? series('CpuPercentage', 3) : series('MemoryPercentage', 15),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toContain('2 aplicativo');
+    });
+
+    it('does not flag a plan with healthy CPU usage even with few apps', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-healthy',
+            name: 'plan-healthy',
+            location: 'eastus',
+            sku: { name: 'S1', tier: 'Standard' },
+            numberOfSites: 1,
+          },
+        ]),
+      );
+      metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
+        options.metricnames === 'CpuPercentage' ? series('CpuPercentage', 45) : series('MemoryPercentage', 60),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(0);
     });
 
     it('measures a vCore database by CPU when it reports no DTU', async () => {

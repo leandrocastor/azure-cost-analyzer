@@ -108,6 +108,7 @@ type ComputeClientLike = {
 
 type AppServiceClientLike = {
   webApps: { list: () => AsyncIterable<ResourceLike> | Iterable<ResourceLike> };
+  appServicePlans: { list: () => AsyncIterable<ResourceLike> | Iterable<ResourceLike> };
 };
 
 type StorageClientLike = {
@@ -280,6 +281,86 @@ export class ResourceDetectorService {
 
       return idleResources;
     }, 'Failed to detect idle App Services');
+  }
+
+  /**
+   * Detects App Service Plans that waste their reserved capacity: either the
+   * plan hosts no application at all, or every application it hosts is
+   * consistently idle.
+   *
+   * The site-level detector above cannot see this: a plan with zero apps has no
+   * site to iterate, and a plan whose apps are each individually flagged still
+   * hides the fact that the whole reserved capacity behind them is unused. Both
+   * cases are billed in full regardless of usage, per the App Service Plan
+   * billing model, so they are the highest-confidence waste this tool can report.
+   */
+  public async detectIdleAppServicePlans(): Promise<IdleResource[]> {
+    return this.wrapDetection(async () => {
+      const plans = await toArray(this.appServiceClient.appServicePlans.list());
+      const idleResources: IdleResource[] = [];
+
+      for (const plan of plans) {
+        const resource = this.normalizeResource(plan, 'Microsoft.Web/serverFarms');
+
+        // Free, Shared, Consumption and Flex Consumption plans carry no reserved
+        // compute charge, so there is no fixed cost to eliminate.
+        if (isFreeAppServiceSku(plan)) {
+          continue;
+        }
+
+        const numberOfSites = Number(readProperty<number>(plan, 'numberOfSites') ?? 0);
+        const priceQuery = this.buildAppServicePlanPriceQuery(resource, plan);
+
+        if (numberOfSites === 0) {
+          idleResources.push(
+            await this.buildIdleResource({
+              resource,
+              reason: 'App Service Plan sem nenhum aplicativo implantado, mas continua reservando instâncias e sendo cobrado integralmente',
+              metrics: [],
+              idleScore: 97,
+              fallbackMonthlySavings: 75,
+              observationWindowDays: 0,
+              priceQuery,
+              evidenceMetrics: [
+                { label: 'Aplicativos hospedados', value: 0, unit: 'apps', threshold: 0, comparison: 'equals' },
+              ],
+            }),
+          );
+          continue;
+        }
+
+        const cpuMetrics = await this.getMetrics(resource.id, 'CpuPercentage', 'PT1H', 'avg');
+        if (cpuMetrics.length < MIN_DATA_POINTS) {
+          continue;
+        }
+
+        const memoryMetrics = await this.getMetrics(resource.id, 'MemoryPercentage', 'PT1H', 'avg');
+        const avgCpu = this.metricAverage(cpuMetrics);
+        const avgMemory = memoryMetrics.length > 0 ? this.metricAverage(memoryMetrics) : undefined;
+
+        if (avgCpu < 10 && (avgMemory === undefined || avgMemory < 30)) {
+          idleResources.push(
+            await this.buildIdleResource({
+              resource,
+              reason: `Plano com ${numberOfSites} aplicativo(s) hospedado(s) e CPU média abaixo de 10% nos últimos 7 dias`,
+              metrics: cpuMetrics,
+              idleScore: 68,
+              fallbackMonthlySavings: 90,
+              observationWindowDays: 7,
+              priceQuery,
+              evidenceMetrics: [
+                { label: 'CPU média do plano', value: Number(avgCpu.toFixed(2)), unit: '%', threshold: 10, comparison: 'below' },
+                ...(avgMemory !== undefined
+                  ? [{ label: 'Memória média do plano', value: Number(avgMemory.toFixed(2)), unit: '%' } satisfies EvidenceMetric]
+                  : []),
+              ],
+            }),
+          );
+        }
+      }
+
+      return idleResources;
+    }, 'Failed to detect idle App Service Plans');
   }
 
   /**
@@ -648,6 +729,7 @@ export class ResourceDetectorService {
     const results = await Promise.all([
       this.detectIdleVMs(),
       this.detectIdleAppServices(),
+      this.detectIdleAppServicePlans(),
       this.detectIdleStorage(),
       this.detectIdleSqlDatabases(),
       this.detectUnattachedDisks(),
@@ -881,6 +963,35 @@ export class ResourceDetectorService {
    */
   private publicIpMeterPattern(sku: string): RegExp {
     return /standard/i.test(sku) ? /^Standard IPv4 .*Public IP$/i : /^Basic IPv4 .*Public IP$/i;
+  }
+
+  /**
+   * App Service Plan tiers are not billed by the ARM SKU name used in the API
+   * (which the retail catalog rarely populates for this service), but by a meter
+   * whose name is the SKU code itself, sometimes with a space inserted before the
+   * version suffix depending on the tier generation (e.g. "S1 App" vs "P1v4"). The
+   * pattern below tolerates that inconsistency instead of enumerating every tier.
+   */
+  private buildAppServicePlanPriceQuery(resource: Resource, plan: ResourceLike): PriceQuery | undefined {
+    const region = resource.location;
+    const skuName = readSkuName(plan);
+    if (!region || region === 'global' || !skuName) {
+      return undefined;
+    }
+
+    const isLinux = readProperty<boolean>(plan, 'reserved') === true;
+    const flexibleSku = skuName
+      .trim()
+      .split('')
+      .map((char) => char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('\\s*');
+
+    return {
+      serviceName: 'Azure App Service',
+      region,
+      meterNamePattern: new RegExp(`^${flexibleSku}(\\s*App)?$`, 'i'),
+      productNamePattern: isLinux ? /linux/i : /^(?!.*linux).*$/i,
+    };
   }
 
   /**

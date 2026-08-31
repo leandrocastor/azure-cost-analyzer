@@ -8,7 +8,8 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 
 - Azure Cost Management aggregation by service, resource group, location, or tags
 - Cost trend analysis, anomaly detection, and simple forecasting
-- Idle resource detection for VMs, App Services, Storage, SQL, disks, public IPs, and load balancers
+- Idle resource detection for VMs, App Services, **App Service Plans** (empty or underutilized), Storage, SQL, disks, public IPs, and load balancers
+- **FinOps Decision Engine**: classifies every recommendation by execution readiness (executable now, validate first, investigate, historical only) and splits total savings into confirmed, probable, and unconfirmed
 - Prioritized optimization recommendations with ROI, risk, and effort scoring
 - **Automatic executive summary** in plain language at the top of the report
 - **Executable remediation plan**: ready-to-run `az` commands with pre-checks, rollback and equivalent Terraform/Bicep snippets, plus an `apply-remediation.sh` script that is dry-run by default
@@ -227,6 +228,20 @@ A FinOps report is only useful when every finding survives pushback from the inf
 
 Savings are equally faithful: when a retail price is resolved it is used **verbatim**, with no multipliers or artificial floors inflating the figures.
 
+#### App Service Plan as the real billing unit
+
+App Service is billed at the **plan** level (a reservation of VM instances by tier and worker count), not per individual site. That means a paid plan with no apps deployed still incurs its full cost, and a plan whose apps are all idle wastes the entire reservation — neither case shows up when analyzing sites one by one.
+
+| Situation on the plan | Finding raised | Recommended action |
+| --- | --- | --- |
+| Paid plan with 0 hosted apps | Confirmed orphan, high confidence | Delete the plan (scaling down would still leave an unused reservation) |
+| Plan with apps, but plan-wide average CPU below 10% over 7 days | Plan underutilization | Scale the plan down or consolidate apps into a smaller plan |
+| Plan on Free, Shared, Consumption, or Flex Consumption tier | Skipped | No fixed reservation to save |
+
+```bash
+cost-analyzer detect --resource-type app-service-plan
+```
+
 #### Reconciliation against the actual invoice
 
 Idle detection reasons about utilization and list prices, which is a **projection** of what a resource would cost. Cost Management knows what it **actually cost**. When the two disagree, the invoice wins:
@@ -267,6 +282,19 @@ When the report runs with `--compare`, recommendations that remain open stop bei
 ```bash
 cost-analyzer export --period 1 --output ./report-september.html --compare ./report-august.html
 ```
+
+#### FinOps Decision Engine
+
+Not every technical recommendation can be executed without review, and not every estimated saving carries the same certainty. The Decision Engine cross-references each recommendation with its evidence and classifies it into one of four categories, so the executive side knows exactly what can be applied today versus what needs human validation first:
+
+| Category | Meaning |
+| --- | --- |
+| Executable now | Low risk with savings confirmed by the invoice, or a high-confidence configuration finding with low risk and effort |
+| Validate first | High risk, or the action depends on confirmation from the team owning the resource |
+| Investigate | Low confidence or heuristic basis — the evidence is not strong enough to decide alone |
+| Historical only | The resource has already stopped incurring cost; there is no future saving to capture, only the record of past waste |
+
+Total savings are also split by confidence status — **confirmed** (matches the invoice), **probable** (high-confidence configuration finding), and **unconfirmed** (estimate with no invoice backing) — instead of being rolled up into a single optimistic figure.
 
 ## Roadmap
 

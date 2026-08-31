@@ -11,6 +11,7 @@ import { CostAnalyzerService } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
+import { DecisionEngineService } from '@/services/decision-engine';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
 import { OptimizerService } from '@/services/optimizer';
 import { OwnershipService } from '@/services/ownership';
@@ -307,6 +308,8 @@ export default class ExportCommand extends Command {
         ? []
         : new RemediationService().buildPlans(recommendations, idleResources);
 
+      const decisionEngine = new DecisionEngineService().evaluate(recommendations, idleResources, costs.currency);
+
       const executiveSummary = new ExecutiveSummaryService().build({
         costs,
         idleResources,
@@ -329,6 +332,7 @@ export default class ExportCommand extends Command {
         remediationPlans,
         waf,
         inaction,
+        decisionEngine,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());

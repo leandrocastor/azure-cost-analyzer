@@ -4,7 +4,7 @@ import ora from 'ora';
 
 import { ResourceDetectorService } from '@/services/resource-detector';
 
-type ResourceTypeFlag = 'all' | 'vm' | 'app-service' | 'storage' | 'sql' | 'disk' | 'ip' | 'lb';
+type ResourceTypeFlag = 'all' | 'vm' | 'app-service' | 'app-service-plan' | 'storage' | 'sql' | 'disk' | 'ip' | 'lb';
 
 /**
  * Detects idle Azure resources.
@@ -16,7 +16,7 @@ export default class DetectCommand extends Command {
     subscription: Flags.string({ char: 's', description: 'Azure subscription id override' }),
     'resource-type': Flags.string({
       description: 'Detector scope',
-      options: ['all', 'vm', 'app-service', 'storage', 'sql', 'disk', 'ip', 'lb'],
+      options: ['all', 'vm', 'app-service', 'app-service-plan', 'storage', 'sql', 'disk', 'ip', 'lb'],
       default: 'all',
     }),
     format: Flags.string({
@@ -61,6 +61,8 @@ export default class DetectCommand extends Command {
         return detector.detectIdleVMs();
       case 'app-service':
         return detector.detectIdleAppServices();
+      case 'app-service-plan':
+        return detector.detectIdleAppServicePlans();
       case 'storage':
         return detector.detectIdleStorage();
       case 'sql':

@@ -53,6 +53,11 @@ export type PriceQuery = {
   meterName?: string;
   /** Narrows the result when a service exposes many meters for the same SKU. */
   meterNamePattern?: RegExp;
+  /**
+   * Narrows by product name, needed for catalogs where the OS (Windows/Linux) is
+   * only distinguishable in the product name, not in the meter name.
+   */
+  productNamePattern?: RegExp;
 };
 
 export type MonthlyPrice = {
@@ -131,7 +136,7 @@ export class PricingService {
       return undefined;
     }
 
-    const cacheKey = `${query.serviceName}|${query.region}|${query.armSkuName ?? ''}|${query.meterName ?? ''}|${query.meterNamePattern?.source ?? ''}`;
+    const cacheKey = `${query.serviceName}|${query.region}|${query.armSkuName ?? ''}|${query.meterName ?? ''}|${query.meterNamePattern?.source ?? ''}|${query.productNamePattern?.source ?? ''}`;
     const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
       return cached ?? undefined;
@@ -230,6 +235,10 @@ export class PricingService {
       }
 
       if (query.meterNamePattern && !query.meterNamePattern.test(item.meterName)) {
+        continue;
+      }
+
+      if (query.productNamePattern && !query.productNamePattern.test(item.productName)) {
         continue;
       }
 

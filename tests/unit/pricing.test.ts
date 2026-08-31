@@ -108,6 +108,27 @@ describe('PricingService', () => {
     expect(price?.meterName).toBe('Standard Static IP Addresses');
   });
 
+  it('narrows results with a product name pattern, distinguishing Windows from Linux meters', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        Items: [
+          { retailPrice: 0.122, currencyCode: 'USD', unitOfMeasure: '1 Hour', meterName: 'S1 App', productName: 'Azure App Service Standard Plan - Linux', armRegionName: 'brazilsouth' },
+          { retailPrice: 0.09, currencyCode: 'USD', unitOfMeasure: '1 Hour', meterName: 'S1 App', productName: 'Azure App Service Standard Plan', armRegionName: 'brazilsouth' },
+        ],
+      }),
+    );
+
+    const service = new PricingService({ fetchImpl: fetchImpl as unknown as typeof fetch });
+    const price = await service.getMonthlyPrice({
+      serviceName: 'Azure App Service',
+      region: 'brazilsouth',
+      meterNamePattern: /^S\s*1(\s*App)?$/i,
+      productNamePattern: /^(?!.*linux).*$/i,
+    });
+
+    expect(price?.amount).toBe(65.7);
+  });
+
   it('requests the currency Azure bills the tenant in', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ Items: [] }));
     const service = new PricingService({ currency: 'BRL', fetchImpl: fetchImpl as unknown as typeof fetch });

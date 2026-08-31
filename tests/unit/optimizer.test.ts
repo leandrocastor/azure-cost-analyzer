@@ -191,6 +191,32 @@ describe('OptimizerService', () => {
       expect(recommendation?.actionType).toBe('CLEANUP');
       expect(recommendation?.billingRationale?.billingModel).toContain('desalocada');
     });
+
+    it('recommends deleting an App Service Plan with zero apps instead of downsizing it', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        buildIdle(
+          'Microsoft.Web/serverfarms',
+          'plan-vazio',
+          'App Service Plan sem nenhum aplicativo implantado, mas continua reservando instâncias e sendo cobrado integralmente',
+        ),
+      ]);
+
+      expect(recommendation?.actionType).toBe('DELETE');
+      expect(recommendation?.billingRationale?.billingModel).toContain('reserva');
+    });
+
+    it('recommends downsizing an App Service Plan whose hosted apps are all idle', async () => {
+      const [recommendation] = await new OptimizerService().generateRecommendations([
+        buildIdle(
+          'Microsoft.Web/serverfarms',
+          'plan-subutilizado',
+          'Plano com 2 aplicativo(s) hospedado(s) e CPU média abaixo de 10% nos últimos 7 dias',
+        ),
+      ]);
+
+      expect(recommendation?.actionType).toBe('DOWNSIZE');
+      expect(recommendation?.billingRationale?.documentationUrl).toMatch(/^https:\/\/learn\.microsoft\.com\//);
+    });
   });
   describe('savings fidelity against the invoice', () => {
     const withBasis = (
