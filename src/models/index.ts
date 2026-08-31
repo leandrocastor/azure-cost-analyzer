@@ -33,12 +33,25 @@ export const CostTrendSchema = z.object({
   percentChange: z.number().finite(),
 });
 
+export const CostAnomalyRootCauseSchema = z.object({
+  dimension: z.enum(['service', 'resourceGroup']),
+  key: z.string().min(1),
+  amountOnAnomalyDate: costAmount,
+  averageAmount: costAmount,
+  deltaAmount: costAmount,
+  shareOfTotalDelta: z.number().min(0).max(1),
+});
+
 export const CostAnomalySchema = z.object({
   date: z.string().min(1),
   amount: costAmount,
   expectedAmount: costAmount,
   deviation: z.number().finite(),
   severity: z.enum(['low', 'medium', 'high']),
+  // Root cause is derived from the same period breakdown already fetched for
+  // the anomalous date, never a separate estimate, so it can be missing when
+  // that breakdown is unavailable — never invented to fill the gap.
+  rootCauses: z.array(CostAnomalyRootCauseSchema).default([]),
 });
 
 export const CostForecastSchema = z.object({
@@ -222,6 +235,12 @@ export const RemediationPlanSchema = z.object({
     terraform: z.string(),
     bicep: z.string(),
   }),
+  // The three fields below turn a script into an auditable playbook: what
+  // breaks if this goes wrong, how to know it worked, and when an operator
+  // should refuse to run it even though the recommendation exists.
+  impactAnalysis: z.string().min(1),
+  successCriteria: z.string().min(1),
+  whenNotToRun: z.string().min(1),
 });
 
 /**
@@ -433,6 +452,104 @@ export const AgingReportSchema = z.object({
   summary: z.string().min(1),
 });
 
+/**
+ * A non-production resource (by name or environment tag) that is still
+ * confirmed-old and still billing real cost — the classic "forgotten test
+ * environment" that nobody remembered to tear down.
+ */
+export const ForgottenEnvironmentResourceSchema = z.object({
+  resourceId: z.string().min(1),
+  resourceName: z.string().min(1),
+  resourceType: z.string().min(1),
+  resourceGroup: z.string().min(1),
+  matchedPattern: z.string().min(1),
+  matchedOn: z.enum(['name', 'tag']),
+  matchedTagKey: z.string().optional(),
+  createdAt: z.string().min(1),
+  ageDays: z.number().int().min(0),
+  monthlyCost: nonNegativeNumber,
+  currency: z.string().min(1),
+  isIdle: z.boolean(),
+});
+
+export const ForgottenEnvironmentReportSchema = z.object({
+  resources: z.array(ForgottenEnvironmentResourceSchema),
+  totalMonthlyCostAtRisk: nonNegativeNumber,
+  resourcesInspected: z.number().int().min(0),
+  resourcesWithConfirmedAge: z.number().int().min(0),
+  summary: z.string().min(1),
+});
+
+/**
+ * Coverage of a single governance tag (owner, environment, cost center) across
+ * the inspected estate.
+ */
+export const TagCoverageSchema = z.object({
+  tagKey: z.string().min(1),
+  label: z.string().min(1),
+  presentCount: z.number().int().min(0),
+  missingCount: z.number().int().min(0),
+  missingPercent: z.number().min(0).max(1),
+});
+
+/**
+ * A resource group ranked by how much of its estate is missing governance tags.
+ */
+export const GovernanceRankingEntrySchema = z.object({
+  resourceGroup: z.string().min(1),
+  resourceCount: z.number().int().min(0),
+  missingAnyTagCount: z.number().int().min(0),
+  missingAnyTagPercent: z.number().min(0).max(1),
+});
+
+export const GovernanceReportSchema = z.object({
+  resourcesInspected: z.number().int().min(0),
+  coverage: z.array(TagCoverageSchema),
+  worstResourceGroups: z.array(GovernanceRankingEntrySchema),
+  summary: z.string().min(1),
+});
+
+/**
+ * Cost attributed to a single unit-economics key (e.g. an "app" or
+ * "customer" tag value), built only from real billed cost already fetched —
+ * never a projection.
+ */
+export const UnitEconomicsEntrySchema = z.object({
+  key: z.string().min(1),
+  monthlyCost: nonNegativeNumber,
+  resourceCount: z.number().int().min(0),
+  shareOfTaggedTotal: z.number().min(0).max(1),
+});
+
+export const UnitEconomicsReportSchema = z.object({
+  groupTagKey: z.string().min(1),
+  entries: z.array(UnitEconomicsEntrySchema),
+  taggedMonthlyCost: nonNegativeNumber,
+  untaggedMonthlyCost: nonNegativeNumber,
+  untaggedResourceCount: z.number().int().min(0),
+  summary: z.string().min(1),
+});
+
+/**
+ * A single weighted dimension of the FinOps maturity score, each backed by a
+ * metric already computed elsewhere in the report (WAF, ownership tagging,
+ * governance, aging/forgotten findings) — the composite never introduces a
+ * number that was not already derived from real data.
+ */
+export const MaturityDimensionSchema = z.object({
+  name: z.string().min(1),
+  score: z.number().min(0).max(100),
+  weight: z.number().min(0).max(1),
+  evidence: z.string().min(1),
+});
+
+export const FinOpsMaturityScoreSchema = z.object({
+  score: z.number().min(0).max(100),
+  grade: z.enum(['A', 'B', 'C', 'D', 'E']),
+  dimensions: z.array(MaturityDimensionSchema),
+  summary: z.string().min(1),
+});
+
 export type CostEntry = z.infer<typeof CostEntrySchema>;
 export type CostSummary = z.infer<typeof CostSummarySchema>;
 export type CostTrend = z.infer<typeof CostTrendSchema>;
@@ -466,3 +583,13 @@ export type Decision = z.infer<typeof DecisionSchema>;
 export type DecisionEngineReport = z.infer<typeof DecisionEngineReportSchema>;
 export type AgingResource = z.infer<typeof AgingResourceSchema>;
 export type AgingReport = z.infer<typeof AgingReportSchema>;
+export type CostAnomalyRootCause = z.infer<typeof CostAnomalyRootCauseSchema>;
+export type ForgottenEnvironmentResource = z.infer<typeof ForgottenEnvironmentResourceSchema>;
+export type ForgottenEnvironmentReport = z.infer<typeof ForgottenEnvironmentReportSchema>;
+export type TagCoverage = z.infer<typeof TagCoverageSchema>;
+export type GovernanceRankingEntry = z.infer<typeof GovernanceRankingEntrySchema>;
+export type GovernanceReport = z.infer<typeof GovernanceReportSchema>;
+export type UnitEconomicsEntry = z.infer<typeof UnitEconomicsEntrySchema>;
+export type UnitEconomicsReport = z.infer<typeof UnitEconomicsReportSchema>;
+export type MaturityDimension = z.infer<typeof MaturityDimensionSchema>;
+export type FinOpsMaturityScore = z.infer<typeof FinOpsMaturityScoreSchema>;

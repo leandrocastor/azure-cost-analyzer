@@ -48,6 +48,43 @@ describe('RemediationService', () => {
     }
   });
 
+  it('builds impact analysis, success criteria and when-not-to-run guardrails for every plan', async () => {
+    const plans = service.buildPlans(await buildRecommendations(), mockIdleResources);
+
+    for (const plan of plans) {
+      expect(plan.impactAnalysis.length).toBeGreaterThan(0);
+      expect(plan.successCriteria.length).toBeGreaterThan(0);
+      expect(plan.whenNotToRun.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('requires explicit team confirmation in the when-not-to-run guardrail for high-risk actions', () => {
+    const plans = service.buildPlans(
+      [recommendationFor({ risk: 'high', actionType: 'DELETE' })],
+      mockIdleResources,
+    );
+
+    expect(plans[0]?.whenNotToRun).toContain('confirmação explícita do time responsável');
+  });
+
+  it('mentions the missing backup guardrail for destructive actions', () => {
+    const plans = service.buildPlans(
+      [recommendationFor({ actionType: 'DELETE' })],
+      mockIdleResources,
+    );
+
+    expect(plans[0]?.whenNotToRun).toContain('backup');
+  });
+
+  it('states that savings are only confirmed on the next invoice, not at execution time', () => {
+    const plans = service.buildPlans(
+      [recommendationFor({ actionType: 'DOWNSIZE' })],
+      mockIdleResources,
+    );
+
+    expect(plans[0]?.successCriteria).toContain('fatura seguinte');
+  });
+
   it('extracts subscription and resource group from the resource id', () => {
     const [plan] = service.buildPlans([recommendationFor()], []);
 

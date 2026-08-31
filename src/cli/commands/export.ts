@@ -5,7 +5,7 @@ import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import type { CostDiff, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
+import type { CostDiff, CostEntry, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
 import { AgingDetectorService } from '@/services/aging-detector';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
@@ -14,12 +14,16 @@ import { CostReconciliationService } from '@/services/cost-reconciliation';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { DecisionEngineService } from '@/services/decision-engine';
+import { EnvironmentDetectorService } from '@/services/environment-detector';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
+import { FinOpsMaturityScoreService } from '@/services/finops-maturity';
+import { GovernanceReportService } from '@/services/governance-report';
 import { OptimizerService } from '@/services/optimizer';
 import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
 import { ResourceDetectorService } from '@/services/resource-detector';
 import { ResourceGraphService } from '@/services/resource-graph';
+import { UnitEconomicsService } from '@/services/unit-economics';
 import { costManagementQpuLimiter } from '@/utils/qpu-limiter';
 import { InactionCostService } from '@/services/inaction-cost';
 import { PricingService } from '@/services/pricing';
@@ -32,6 +36,11 @@ const defaultOutputPath = (): string => {
   const stamp = new Date().toISOString().replace(/:/g, '-').slice(0, 16);
   return `azure-cost-report-${stamp}.html`;
 };
+
+/** Trailing months always fetched for anomaly detection, independent of --period,
+ * because a meaningful trend needs several data points regardless of how short the
+ * analyzed billing period is. */
+const ANOMALY_DETECTION_MONTHS = 6;
 
 /**
  * Resolves which subscriptions the report should cover. When an explicit
@@ -169,6 +178,7 @@ export default class ExportCommand extends Command {
       const analyzedSubscriptions: AccessibleSubscription[] = [];
       const inventory: Resource[] = [];
       const resourceLedgers: ResourceCostLedger[] = [];
+      const costEntries: CostEntry[] = [];
       const creationTimes = new Map<string, string>();
 
       // Pricing is looked up in the currency Azure bills the tenant in, which is only
@@ -258,6 +268,20 @@ export default class ExportCommand extends Command {
           );
         }
 
+        // Anomaly detection needs a real monthly trend, not just the analyzed period,
+        // so it always looks at a fixed trailing window regardless of --period. A
+        // failure here only disables the anomalies section; it never blocks the rest
+        // of the report.
+        spinner.text = `Fetching monthly cost trend for ${progress}`;
+        try {
+          const entries = await costAnalyzer.getCostsByPeriod(ANOMALY_DETECTION_MONTHS, subscription.id);
+          costEntries.push(...entries);
+        } catch (error: unknown) {
+          warnings.push(
+            `Tendência de custo indisponível para detecção de anomalias em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+          );
+        }
+
         // Resource Graph is not subject to the same throttling as Cost Management, and
         // a failure here degrades to an empty map rather than raising, so it never
         // blocks the rest of the pipeline.
@@ -306,12 +330,45 @@ export default class ExportCommand extends Command {
         ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
       ).buildReport(idleResources);
 
+      const waf = new WafScorecardService().evaluate({
+        costs,
+        idleResources,
+        recommendations,
+        resources: inventory,
+        ownerTagKeys: ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
+        subscriptionCount: analyzedSubscriptions.length,
+      });
+
+      const mergedLedger = mergeResourceLedgers(resourceLedgers);
+
       const aging = new AgingDetectorService(ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined).detect(
         inventory,
         creationTimes,
-        mergeResourceLedgers(resourceLedgers),
+        mergedLedger,
         idleResources,
       );
+
+      const forgottenEnvironments = new EnvironmentDetectorService().detect(
+        inventory,
+        creationTimes,
+        mergedLedger,
+        idleResources,
+      );
+
+      const governance = new GovernanceReportService().buildReport(inventory);
+
+      const unitEconomics = new UnitEconomicsService().build(inventory, mergedLedger);
+
+      const maturityScore = new FinOpsMaturityScoreService().build({
+        waf,
+        governance,
+        aging,
+        forgottenEnvironments,
+      });
+
+      // Anomalies are derived from the same cost entries already fetched per
+      // subscription — no new estimate, just a different cut of real billed data.
+      const anomalies = costAnalyzer.detectAnomalies(costEntries);
 
       // Comparing against a previous report is best-effort: a missing or malformed
       // baseline must never prevent the current report from being produced.
@@ -343,15 +400,6 @@ export default class ExportCommand extends Command {
         inaction = new InactionCostService().analyze(previousSnapshot, idleResources);
       }
 
-      const waf = new WafScorecardService().evaluate({
-        costs,
-        idleResources,
-        recommendations,
-        resources: inventory,
-        ownerTagKeys: ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
-        subscriptionCount: analyzedSubscriptions.length,
-      });
-
       const remediationPlans = flags['no-remediation']
         ? []
         : new RemediationService().buildPlans(recommendations, idleResources);
@@ -382,6 +430,11 @@ export default class ExportCommand extends Command {
         inaction,
         decisionEngine,
         aging,
+        forgottenEnvironments,
+        governance,
+        unitEconomics,
+        maturityScore,
+        anomalies,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());
