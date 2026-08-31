@@ -405,6 +405,34 @@ export const DecisionEngineReportSchema = z.object({
   summary: z.string().min(1),
 });
 
+/**
+ * A resource confirmed old (via Azure Resource Graph creation time, never
+ * estimated) that still generates real billed cost and carries no ownership
+ * tag. This is the governance blind spot native Azure tooling leaves open:
+ * Cost Management and Advisor show spend and idleness, not "who forgot this
+ * exists and who do I ask before touching it".
+ */
+export const AgingResourceSchema = z.object({
+  resourceId: z.string().min(1),
+  resourceName: z.string().min(1),
+  resourceType: z.string().min(1),
+  resourceGroup: z.string().min(1),
+  createdAt: z.string().min(1),
+  ageDays: z.number().int().min(0),
+  monthlyCost: nonNegativeNumber,
+  currency: z.string().min(1),
+  isIdle: z.boolean(),
+});
+
+export const AgingReportSchema = z.object({
+  resources: z.array(AgingResourceSchema),
+  totalMonthlyCostAtRisk: nonNegativeNumber,
+  oldestResourceAgeDays: z.number().int().min(0),
+  resourcesInspected: z.number().int().min(0),
+  resourcesWithConfirmedAge: z.number().int().min(0),
+  summary: z.string().min(1),
+});
+
 export type CostEntry = z.infer<typeof CostEntrySchema>;
 export type CostSummary = z.infer<typeof CostSummarySchema>;
 export type CostTrend = z.infer<typeof CostTrendSchema>;
@@ -436,3 +464,5 @@ export type DecisionCategory = z.infer<typeof DecisionCategorySchema>;
 export type SavingsStatus = z.infer<typeof SavingsStatusSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
 export type DecisionEngineReport = z.infer<typeof DecisionEngineReportSchema>;
+export type AgingResource = z.infer<typeof AgingResourceSchema>;
+export type AgingReport = z.infer<typeof AgingReportSchema>;

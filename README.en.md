@@ -10,6 +10,7 @@ Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powere
 - Cost trend analysis, anomaly detection, and simple forecasting
 - Idle resource detection for VMs, App Services, **App Service Plans** (empty or underutilized), Storage, SQL, disks, public IPs, and load balancers
 - **FinOps Decision Engine**: classifies every recommendation by execution readiness (executable now, validate first, investigate, historical only) and splits total savings into confirmed, probable, and unconfirmed
+- **Aging & Ownerless Resources**: uses Azure Resource Graph to confirm the real creation date of every resource (never estimated) and flags the ones older than 180 days, with real billed cost and no owner tag — a governance risk even when the resource is not idle
 - Prioritized optimization recommendations with ROI, risk, and effort scoring
 - **Automatic executive summary** in plain language at the top of the report
 - **Executable remediation plan**: ready-to-run `az` commands with pre-checks, rollback and equivalent Terraform/Bicep snippets, plus an `apply-remediation.sh` script that is dry-run by default
@@ -299,6 +300,16 @@ Not every technical recommendation can be executed without review, and not every
 
 Total savings are also split by confidence status — **confirmed** (matches the invoice), **probable** (high-confidence configuration finding), and **unconfirmed** (estimate with no invoice backing) — instead of being rolled up into a single optimistic figure.
 
+#### Aging & Ownerless Resources
+
+Idle time is not the only FinOps risk: a resource can be in full use, billing real cost every month, and still be a governance risk if nobody can be reached before deleting it, renewing a certificate, or reacting to an incident. This analysis uses **Azure Resource Graph** to confirm the real creation date of every resource — never an estimate — and cross-references it with real billed cost (Cost Management) and the absence of any owner tag (`owner`, `dono`, `responsavel`, and other common variations). A finding is only reported when all three criteria hold at once:
+
+- Confirmed age over 180 days (never assumed when Resource Graph does not return a creation date)
+- Non-zero real billed cost in the analyzed period
+- No owner tag present on the resource
+
+The report shows the number of resources with confirmed age versus the total inspected, the monthly cost at risk, and whether the resource also appears in the idle list — making clear that "aging and ownerless" is a governance risk dimension independent from "idle".
+
 ## Roadmap
 
 Planned differentiators:
@@ -309,8 +320,11 @@ Planned differentiators:
 - [ ] **Scheduled Teams and Slack digest** — periodic summary with history published to a static site
 - [ ] **Anomaly detection with root cause** — pinpoints which resource or resource group caused a spend spike
 - [ ] **Commitment simulator** — compares Reserved Instances, Savings Plans, and Spot, including payback
-- [ ] **MCP Server** — exposes findings as tools for AI agents, so you can ask "why did my cost go up?" straight from GitHub Copilot or Claude. Requires a local install with an MCP client (VS Code, Claude Desktop) and therefore **does not work in the one-off Azure Cloud Shell run**
 - [ ] **FinOps maturity score** — a 0 to 100 score for the tenant, tracked across runs
+- [ ] **Forgotten environments detector** — cross-references dev, test, staging, lab, poc, demo, temp, old, and backup tags/names with real cost, age, and lack of access telemetry
+- [ ] **Governance report** — percentage of resources missing an owner, environment, or costCenter tag, with a ranking of the worst-scoring resource groups
+- [ ] **Safe remediation playbooks** — every remediation action gets a pre-check, impact analysis, documentation, dry-run mode, rollback plan, success criteria, and an explicit "when not to run" rule
+- [ ] **MCP Server** — exposes findings as tools for AI agents, so you can ask "why did my cost go up?" straight from GitHub Copilot or Claude. Requires a local install with an MCP client (VS Code, Claude Desktop) and therefore **does not work in the one-off Azure Cloud Shell run**
 
 ## Dashboard screenshot
 

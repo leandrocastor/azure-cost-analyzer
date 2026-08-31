@@ -19,6 +19,7 @@ const spawnMock = vi.hoisted(() => vi.fn(() => {
 const azureClientMock = vi.hoisted(() => ({
   getSubscriptionId: vi.fn((value?: string) => value ?? validEnv.AZURE_SUBSCRIPTION_ID),
   getConfiguredSubscriptionId: vi.fn(() => validEnv.AZURE_SUBSCRIPTION_ID),
+  getCredential: vi.fn(() => ({})),
   listAccessibleSubscriptions: vi.fn(async () => [
     { id: 'sub-a', displayName: 'Subscription A' },
     { id: 'sub-b', displayName: 'Subscription B' },
@@ -26,6 +27,10 @@ const azureClientMock = vi.hoisted(() => ({
 }));
 const costAnalyzerMock = vi.hoisted(() => ({
   queryCosts: vi.fn(async () => mockCostSummary),
+  queryResourceCosts: vi.fn(async () => ({ currency: mockCostSummary.currency, months: [], resources: {} })),
+}));
+const resourceGraphMock = vi.hoisted(() => ({
+  getCreationTimes: vi.fn(async () => new Map()),
 }));
 const resourceDetectorMock = vi.hoisted(() => ({
   detectAll: vi.fn(async () => mockIdleResources),
@@ -66,6 +71,11 @@ vi.mock('@/services/resource-detector', () => ({
 vi.mock('@/services/optimizer', () => ({
   OptimizerService: vi.fn(function () {
     return optimizerMock;
+  }),
+}));
+vi.mock('@/services/resource-graph', () => ({
+  ResourceGraphService: vi.fn(function () {
+    return resourceGraphMock;
   }),
 }));
 vi.mock('@/dashboard/server', () => ({
