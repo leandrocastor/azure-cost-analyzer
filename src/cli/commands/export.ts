@@ -6,8 +6,10 @@ import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
 import type { CostDiff, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
+import { AgingDetectorService } from '@/services/aging-detector';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
+import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
@@ -17,6 +19,7 @@ import { OptimizerService } from '@/services/optimizer';
 import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
 import { ResourceDetectorService } from '@/services/resource-detector';
+import { ResourceGraphService } from '@/services/resource-graph';
 import { costManagementQpuLimiter } from '@/utils/qpu-limiter';
 import { InactionCostService } from '@/services/inaction-cost';
 import { PricingService } from '@/services/pricing';
@@ -77,6 +80,27 @@ const mergeCostSummaries = (summaries: CostSummary[]): CostSummary => {
     addBucket(merged.byService, summary.byService);
     addBucket(merged.byResourceGroup, summary.byResourceGroup);
     addBucket(merged.byLocation, summary.byLocation);
+  }
+
+  return merged;
+};
+
+/**
+ * Merges per-subscription resource cost ledgers into one, so the aging
+ * detector can look up billed cost regardless of which subscription a
+ * resource belongs to.
+ */
+const mergeResourceLedgers = (ledgers: ResourceCostLedger[]): ResourceCostLedger => {
+  const merged: ResourceCostLedger = {
+    currency: ledgers[0]?.currency ?? 'USD',
+    months: [...new Set(ledgers.flatMap((ledger) => ledger.months))].sort(),
+    resources: {},
+  };
+
+  for (const ledger of ledgers) {
+    for (const [resourceId, months] of Object.entries(ledger.resources)) {
+      merged.resources[resourceId] = { ...(merged.resources[resourceId] ?? {}), ...months };
+    }
   }
 
   return merged;
@@ -144,6 +168,8 @@ export default class ExportCommand extends Command {
       const warnings: string[] = [];
       const analyzedSubscriptions: AccessibleSubscription[] = [];
       const inventory: Resource[] = [];
+      const resourceLedgers: ResourceCostLedger[] = [];
+      const creationTimes = new Map<string, string>();
 
       // Pricing is looked up in the currency Azure bills the tenant in, which is only
       // known after the first cost query, so the service is created lazily.
@@ -201,14 +227,20 @@ export default class ExportCommand extends Command {
         // what a resource would cost. Cost Management knows what it did cost. Claiming a
         // saving on something billed at zero, such as an App Service on the F1 Free tier,
         // is what makes a finance audience discard the entire report.
-        if (subscriptionFindings.length > 0) {
-          spinner.text = `Reconciling findings against billed cost for ${progress}`;
-          try {
-            const ledger = await costAnalyzer.queryResourceCosts(
-              subscription.id,
-              startDate.toISOString().slice(0, 10),
-              endDate.toISOString().slice(0, 10),
-            );
+        //
+        // The per-resource ledger is fetched regardless of whether idle findings exist:
+        // the aging/ownerless detector needs it too, to confirm a resource is still
+        // costing real money before flagging it as a governance risk.
+        spinner.text = `Fetching billed cost per resource for ${progress}`;
+        try {
+          const ledger = await costAnalyzer.queryResourceCosts(
+            subscription.id,
+            startDate.toISOString().slice(0, 10),
+            endDate.toISOString().slice(0, 10),
+          );
+          resourceLedgers.push(ledger);
+
+          if (subscriptionFindings.length > 0) {
             const reconciliation = new CostReconciliationService().reconcile(subscriptionFindings, ledger);
             subscriptionFindings = reconciliation.idleResources;
 
@@ -219,11 +251,20 @@ export default class ExportCommand extends Command {
                   .join(', ')}.`,
               );
             }
-          } catch (error: unknown) {
-            warnings.push(
-              `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
-            );
           }
+        } catch (error: unknown) {
+          warnings.push(
+            `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
+          );
+        }
+
+        // Resource Graph is not subject to the same throttling as Cost Management, and
+        // a failure here degrades to an empty map rather than raising, so it never
+        // blocks the rest of the pipeline.
+        spinner.text = `Confirming resource creation dates for ${progress}`;
+        const subscriptionCreationTimes = await new ResourceGraphService(azureClient).getCreationTimes(subscription.id);
+        for (const [resourceId, createdAt] of subscriptionCreationTimes) {
+          creationTimes.set(resourceId, createdAt);
         }
 
         idleResources.push(...subscriptionFindings);
@@ -264,6 +305,13 @@ export default class ExportCommand extends Command {
       const ownership = new OwnershipService(
         ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined,
       ).buildReport(idleResources);
+
+      const aging = new AgingDetectorService(ownerTagKeys && ownerTagKeys.length > 0 ? ownerTagKeys : undefined).detect(
+        inventory,
+        creationTimes,
+        mergeResourceLedgers(resourceLedgers),
+        idleResources,
+      );
 
       // Comparing against a previous report is best-effort: a missing or malformed
       // baseline must never prevent the current report from being produced.
@@ -333,6 +381,7 @@ export default class ExportCommand extends Command {
         waf,
         inaction,
         decisionEngine,
+        aging,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());

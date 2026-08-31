@@ -10,6 +10,7 @@ Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboa
 - Análise de tendência de custos, detecção de anomalias e previsão simples
 - Detecção de recursos ociosos para VMs, App Services, **App Service Plans** (vazios ou subutilizados), Storage, SQL, discos, IPs públicos e load balancers
 - **FinOps Decision Engine**: classifica cada recomendação por prontidão de execução (executável agora, validar antes, investigar, somente histórico) e separa a economia total em confirmada, provável e não confirmada
+- **Recursos Envelhecidos e Sem Dono**: usa o Azure Resource Graph para confirmar a idade real de cada recurso (nunca estimada) e sinaliza os que têm mais de 180 dias, custo faturado real e nenhuma tag de responsável — risco de governança mesmo quando o recurso não está ocioso
 - Recomendações de otimização priorizadas com pontuação de ROI, risco e esforço
 - **Sumário executivo automático** em linguagem natural, no topo do relatório
 - **Plano de remediação executável**: comandos `az` prontos, com verificação prévia, rollback e trechos equivalentes em Terraform e Bicep, mais um script `apply-remediation.sh` que roda em modo simulação por padrão
@@ -299,6 +300,16 @@ Nem toda recomendação técnica pode ser executada sem revisão, e nem toda eco
 
 A economia total também é dividida por status de confiabilidade — **confirmada** (bate com a fatura), **provável** (achado de configuração de alta confiança) e **não confirmada** (estimativa sem respaldo na fatura) — em vez de somar tudo em um único número otimista.
 
+#### Recursos Envelhecidos e Sem Dono
+
+Ociosidade não é o único risco de FinOps: um recurso pode estar em pleno uso, gerando custo real todo mês, e ainda assim ser um risco de governança se ninguém puder ser consultado antes de removê-lo, renovar um certificado ou reagir a um incidente. Essa análise usa o **Azure Resource Graph** para confirmar a idade real de criação de cada recurso — nunca uma estimativa — e cruza com o custo faturado real (Cost Management) e a ausência de qualquer tag de responsável (`owner`, `dono`, `responsavel`, entre outras variações comuns). Só é reportado o que atende aos três critérios ao mesmo tempo:
+
+- Idade confirmada de mais de 180 dias (nunca assumida quando o Resource Graph não retorna a data de criação)
+- Custo faturado real diferente de zero no período analisado
+- Nenhuma tag de responsável presente no recurso
+
+O relatório mostra o total de recursos com idade confirmada versus o total inspecionado, o custo mensal em risco e se o recurso também aparece na lista de ociosos — para deixar claro que "envelhecido e sem dono" é uma dimensão de risco independente de "ocioso".
+
 ## Roadmap
 
 Próximos diferenciais planejados:
@@ -310,6 +321,9 @@ Próximos diferenciais planejados:
 - [ ] **Detecção de anomalias com causa raiz** — identifica qual recurso ou resource group provocou o pico de gasto
 - [ ] **Simulador de compromissos** — compara Reserved Instances, Savings Plans e Spot, com cálculo de payback
 - [ ] **Score de maturidade FinOps** — nota de 0 a 100 para o tenant, com comparação entre execuções
+- [ ] **Detector de ambientes esquecidos** — cruza tags/nomes de dev, test, homolog, lab, poc, demo, temp, old e backup com custo real, idade e ausência de telemetria de acesso
+- [ ] **Relatório de governança** — percentual de recursos sem tag de owner, environment ou costCenter, com ranking dos resource groups piores avaliados
+- [ ] **Playbooks seguros de remediação** — cada ação de remediação passa a ter pré-checagem, análise de impacto, documentação, modo dry-run, plano de rollback, critério de sucesso e critério explícito de quando não executar
 - [ ] **MCP Server** — expõe os achados como ferramentas para agentes de IA, permitindo perguntar "por que meu custo subiu?" direto no GitHub Copilot ou no Claude. Exige instalação local com um cliente MCP (VS Code, Claude Desktop) e, por isso, **não funciona na execução pontual via Azure Cloud Shell**
 
 ## Screenshot do dashboard

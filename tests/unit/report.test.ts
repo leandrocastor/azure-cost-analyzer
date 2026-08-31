@@ -243,6 +243,43 @@ describe('generateStaticReport — seções de diferenciação', () => {
     expect(html).toContain('id="decision-section" hidden');
   });
 
+  it('renders the aging and ownerless resources section', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      aging: {
+        resources: [
+          {
+            resourceId: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-old',
+            resourceName: 'vm-old',
+            resourceType: 'Microsoft.Compute/virtualMachines',
+            resourceGroup: 'rg',
+            createdAt: '2024-01-01T00:00:00Z',
+            ageDays: 600,
+            monthlyCost: 340,
+            currency: 'BRL',
+            isIdle: false,
+          },
+        ],
+        totalMonthlyCostAtRisk: 340,
+        oldestResourceAgeDays: 600,
+        resourcesInspected: 10,
+        resourcesWithConfirmedAge: 5,
+        summary: '1 recurso(s) com mais de 180 dias, sem tag de responsável e com custo faturado confirmado, somando 340.00 BRL/mês em risco de governança.',
+      },
+    });
+
+    expect(html).toContain('"ageDays":600');
+    expect(html).toContain('Recursos Envelhecidos e Sem Dono');
+    expect(html).toContain('"totalMonthlyCostAtRisk":340');
+  });
+
+  it('keeps the aging section hidden without data', () => {
+    const html = generateStaticReport(fullData);
+
+    expect(html).toContain('"aging":null');
+    expect(html).toContain('id="aging-section" hidden');
+  });
+
   it('exposes the evidence that supports each idle finding', () => {
     const html = generateStaticReport({
       ...fullData,

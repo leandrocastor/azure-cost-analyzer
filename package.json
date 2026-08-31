@@ -35,6 +35,7 @@
     "@azure/arm-costmanagement": "latest",
     "@azure/arm-monitor": "latest",
     "@azure/arm-network": "latest",
+    "@azure/arm-resourcegraph": "^5.0.0",
     "@azure/arm-sql": "latest",
     "@azure/arm-storage": "latest",
     "@azure/arm-subscriptions": "^5.1.0",

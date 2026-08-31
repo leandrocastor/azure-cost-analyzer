@@ -1,4 +1,5 @@
 import type {
+  AgingReport,
   CostDiff,
   CostSummary,
   DecisionEngineReport,
@@ -25,6 +26,7 @@ export type StaticReportData = {
   waf?: WafScorecard | undefined;
   inaction?: InactionCost | undefined;
   decisionEngine?: DecisionEngineReport | undefined;
+  aging?: AgingReport | undefined;
 };
 
 /**
@@ -253,6 +255,32 @@ export const REPORT_CLIENT_SCRIPT = `
           + '</div>'
           + '<p class="muted">' + esc(data.summary) + '</p>'
           + '<div class="table-scroll"><table><thead><tr><th>Recurso</th><th>Categoria</th><th>Status da economia</th><th>Economia/mês</th><th>Motivo</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderAging() {
+        const data = REPORT.aging;
+        if (!data || !(data.resources || []).length) return;
+        document.getElementById('aging-section').hidden = false;
+
+        const rows = data.resources.map(function (item) {
+          const years = (item.ageDays / 365).toFixed(1);
+          return '<tr>'
+            + '<td><strong>' + esc(item.resourceName) + '</strong><div class="muted">' + esc(item.resourceType) + '</div></td>'
+            + '<td>' + esc(item.resourceGroup) + '</td>'
+            + '<td>' + item.ageDays + ' dias (~' + years + ' anos)</td>'
+            + '<td>' + fmtFull(item.monthlyCost) + ' ' + esc(item.currency) + '</td>'
+            + '<td>' + (item.isIdle ? '<span class="badge waf-fail">Sim</span>' : '<span class="badge waf-na">Não</span>') + '</td>'
+            + '</tr>';
+        }).join('');
+
+        document.getElementById('aging-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + data.resources.length + '</span><small>recursos envelhecidos sem responsável</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.totalMonthlyCostAtRisk) + '</span><small>custo faturado/mês em risco</small></div>'
+          + '<div class="inaction-kpi"><span>' + (data.oldestResourceAgeDays / 365).toFixed(1) + '</span><small>anos do recurso mais antigo</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<div class="table-scroll"><table><thead><tr><th>Recurso</th><th>Resource Group</th><th>Idade confirmada</th><th>Custo faturado/mês</th><th>Também ocioso?</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       }
 
       function renderWaf() {
@@ -601,6 +629,7 @@ export const REPORT_CLIENT_SCRIPT = `
 
       renderExecutiveSummary();
       renderDecisionEngine();
+      renderAging();
       renderWaf();
       renderInaction();
       renderDiff();
@@ -647,6 +676,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     waf: data.waf ?? null,
     inaction: data.inaction ?? null,
     decisionEngine: data.decisionEngine ?? null,
+    aging: data.aging ?? null,
     remediationPlans: data.remediationPlans ?? [],
   });
 
@@ -1012,6 +1042,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="card">
           <p class="section-hint">Cada recomendação classificada por prontidão de execução e pela confiabilidade da economia estimada, para separar o que já pode ser executado do que ainda precisa de validação ou de mais evidência.</p>
           <div id="decision-body"></div>
+        </div>
+      </section>
+
+      <section id="aging-section" hidden>
+        <h2>Recursos Envelhecidos e Sem Dono</h2>
+        <div class="card">
+          <p class="section-hint">Recursos com idade confirmada via Azure Resource Graph (nunca estimada), sem tag de responsável e ainda gerando custo faturado. Diferente de ociosidade: um recurso aqui listado pode estar em pleno uso e ainda ser um risco de governança, porque ninguém pode ser consultado antes de removê-lo, renovar um certificado ou reagir a um incidente.</p>
+          <div id="aging-body"></div>
         </div>
       </section>
 
