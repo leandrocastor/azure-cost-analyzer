@@ -206,7 +206,7 @@ describe('retry', () => {
     expect(isThrottlingError(new Error('boom'))).toBe(false);
   });
 
-  it('applies a floor to throttling backoff so retries stop burning quota', async () => {
+  it('applies a progressive floor to throttling backoff so retries stop burning quota', async () => {
     const delays: number[] = [];
     let attempts = 0;
     await retry(
@@ -219,7 +219,7 @@ describe('retry', () => {
       },
       { sleep: async (ms) => delays.push(ms), baseDelayMs: 250, throttleFloorMs: 15_000 },
     );
-    expect(delays).toEqual([15_000, 15_000]);
+    expect(delays).toEqual([15_000, 22_500]);
   });
 
   it('keeps the short backoff for non-throttling failures', async () => {

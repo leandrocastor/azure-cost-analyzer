@@ -159,7 +159,7 @@ export class CostAnalyzerService {
         },
         // Throttling cool-downs are enforced per tenant and can span a full minute,
         // so cost queries need a longer budget than a generic Azure call.
-        { maxAttempts: 8, maxDelayMs: 120_000 },
+        { maxAttempts: 8, maxDelayMs: 180_000 },
       );
 
       const summary = this.toSummary(result, startDate, endDate);
@@ -229,7 +229,7 @@ export class CostAnalyzerService {
             throw error;
           }
         },
-        { maxAttempts: 8, maxDelayMs: 120_000 },
+        { maxAttempts: 8, maxDelayMs: 180_000 },
       );
 
       const ledger = this.toResourceLedger(result);
@@ -353,7 +353,7 @@ export class CostAnalyzerService {
             throw error;
           }
         },
-        { maxAttempts: 8, maxDelayMs: 120_000 },
+        { maxAttempts: 8, maxDelayMs: 180_000 },
       );
 
       return this.toEntries(result);
