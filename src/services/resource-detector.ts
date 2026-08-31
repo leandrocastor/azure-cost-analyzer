@@ -394,7 +394,12 @@ export class ResourceDetectorService {
     try {
       const resourceGroup = resourceGroupFromId(resource.id);
       const planName = resource.name;
-      const apps = await toArray(this.appServiceClient.appServicePlans.listWebApps(resourceGroup, planName));
+      // Wrapped in the same retry/backoff used for metrics: this call adds one
+      // extra ARM request per plan, and Azure throttles aggressively, so it must
+      // absorb 429s the same way the rest of the client does instead of failing fast.
+      const apps = await this.azureClient.executeWithRetry(() =>
+        toArray(this.appServiceClient.appServicePlans.listWebApps(resourceGroup, planName)),
+      );
       return apps.length;
     } catch (error) {
       this.logger.warn('Could not confirm app count for App Service Plan; skipping finding', {
@@ -767,19 +772,45 @@ export class ResourceDetectorService {
   /**
    * Runs every detector and returns a consolidated list.
    */
+  /**
+   * Runs every detector and merges the findings.
+   *
+   * Uses `allSettled` rather than `all` on purpose: each detector already retries
+   * transient failures internally, but Azure's aggressive throttling means one
+   * resource type can still exhaust its retry budget. Failing the whole report
+   * because a single detector (say, App Service Plans) hit a 429 would silently
+   * discard every other resource type that succeeded — the exact failure mode
+   * that made "Recursos Ociosos" and "Recomendações" come back completely empty.
+   * A partial report with a warning is always better than an empty one.
+   */
   public async detectAll(): Promise<IdleResource[]> {
-    const results = await Promise.all([
-      this.detectIdleVMs(),
-      this.detectIdleAppServices(),
-      this.detectIdleAppServicePlans(),
-      this.detectIdleStorage(),
-      this.detectIdleSqlDatabases(),
-      this.detectUnattachedDisks(),
-      this.detectUnusedPublicIPs(),
-      this.detectUnusedLoadBalancers(),
-      this.detectStoppedVMsWithBilledDisks(),
-    ]);
-    return results.flat().sort((left, right) => right.estimatedMonthlySavings - left.estimatedMonthlySavings);
+    const detectors: [string, () => Promise<IdleResource[]>][] = [
+      ['VMs', () => this.detectIdleVMs()],
+      ['App Services', () => this.detectIdleAppServices()],
+      ['App Service Plans', () => this.detectIdleAppServicePlans()],
+      ['Storage', () => this.detectIdleStorage()],
+      ['SQL Databases', () => this.detectIdleSqlDatabases()],
+      ['Managed Disks', () => this.detectUnattachedDisks()],
+      ['Public IPs', () => this.detectUnusedPublicIPs()],
+      ['Load Balancers', () => this.detectUnusedLoadBalancers()],
+      ['Stopped VMs', () => this.detectStoppedVMsWithBilledDisks()],
+    ];
+
+    const settled = await Promise.allSettled(detectors.map(([, run]) => run()));
+    const results: IdleResource[] = [];
+
+    settled.forEach((outcome, index) => {
+      const [label] = detectors[index] ?? ['unknown'];
+      if (outcome.status === 'fulfilled') {
+        results.push(...outcome.value);
+      } else {
+        this.logger.error(`Detector "${label}" failed and was skipped; other resource types are unaffected`, {
+          error: outcome.reason instanceof Error ? outcome.reason.message : 'unknown',
+        });
+      }
+    });
+
+    return results.sort((left, right) => right.estimatedMonthlySavings - left.estimatedMonthlySavings);
   }
 
   /**

@@ -196,6 +196,28 @@ describe('ResourceDetectorService', () => {
     await expect(service.detectIdleVMs()).rejects.toBeInstanceOf(AzureApiError);
   });
 
+  it('detectAll isolates a failing detector instead of discarding every other finding', async () => {
+    // App Service Plans throttles and exhausts its retries, but disks still succeed.
+    appServicePlansListMock.mockImplementation(() => {
+      throw new Error('Too many requests. Please retry.');
+    });
+    disksListMock.mockReturnValue(
+      iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', diskState: 'Unattached' }]),
+    );
+    webAppsListMock.mockReturnValue(iterable([]));
+    storageListMock.mockReturnValue(iterable([]));
+    sqlServersListMock.mockReturnValue(iterable([]));
+    publicIpListAllMock.mockReturnValue(iterable([]));
+    loadBalancersListAllMock.mockReturnValue(iterable([]));
+    vmListAllMock.mockReturnValue(iterable([]));
+
+    const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
+    const items = await service.detectAll();
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.resource.name).toBe('disk-a');
+  });
+
   it.each([
     ['vm', 'Percentage CPU', 1],
     ['app', 'Requests', 50],
