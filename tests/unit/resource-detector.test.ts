@@ -7,6 +7,7 @@ const vmListAllMock = vi.fn();
 const disksListMock = vi.fn();
 const webAppsListMock = vi.fn();
 const appServicePlansListMock = vi.fn();
+const appServicePlansListWebAppsMock = vi.fn();
 const storageListMock = vi.fn();
 const sqlServersListMock = vi.fn();
 const sqlDatabasesListByServerMock = vi.fn();
@@ -49,7 +50,7 @@ vi.mock('@azure/arm-sql', () => ({
 }));
 vi.mock('@azure/arm-appservice', () => ({
   WebSiteManagementClient: vi.fn(function () {
-    return { webApps: { list: webAppsListMock }, appServicePlans: { list: appServicePlansListMock } };
+    return { webApps: { list: webAppsListMock }, appServicePlans: { list: appServicePlansListMock, listWebApps: appServicePlansListWebAppsMock } };
   }),
 }));
 
@@ -101,6 +102,8 @@ describe('ResourceDetectorService', () => {
     webAppsListMock.mockReset();
     appServicePlansListMock.mockReset();
     appServicePlansListMock.mockReturnValue(iterable([]));
+    appServicePlansListWebAppsMock.mockReset();
+    appServicePlansListWebAppsMock.mockReturnValue(iterable([]));
     storageListMock.mockReset();
     sqlServersListMock.mockReset();
     sqlDatabasesListByServerMock.mockReset();
@@ -640,12 +643,58 @@ describe('ResourceDetectorService', () => {
           },
         ]),
       );
+      appServicePlansListWebAppsMock.mockReturnValue(iterable([]));
 
       const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
 
       expect(items).toHaveLength(1);
       expect(items[0]?.reason).toContain('sem nenhum aplicativo');
       expect(items[0]?.evidence.dataPoints).toBe(0);
+    });
+
+    it('does not flag a plan as orphan when numberOfSites is stale but listWebApps confirms hosted apps', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-stale-metadata',
+            name: 'plan-stale-metadata',
+            location: 'eastus',
+            sku: { name: 'S1', tier: 'Standard' },
+            // Azure's numberOfSites counter is known to lag or read zero even
+            // when apps are deployed; listWebApps below is the ground truth.
+            numberOfSites: 0,
+          },
+        ]),
+      );
+      appServicePlansListWebAppsMock.mockReturnValue(iterable([{ name: 'app-1' }, { name: 'app-2' }]));
+      metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
+        options.metricnames === 'CpuPercentage' ? series('CpuPercentage', 45) : series('MemoryPercentage', 60),
+      );
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(0);
+    });
+
+    it('skips a plan when the app count cannot be confirmed via listWebApps', async () => {
+      appServicePlansListMock.mockReturnValue(
+        iterable([
+          {
+            id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverfarms/plan-unverifiable',
+            name: 'plan-unverifiable',
+            location: 'eastus',
+            sku: { name: 'S1', tier: 'Standard' },
+            numberOfSites: 0,
+          },
+        ]),
+      );
+      appServicePlansListWebAppsMock.mockImplementation(() => {
+        throw new Error('Forbidden');
+      });
+
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleAppServicePlans();
+
+      expect(items).toHaveLength(0);
     });
 
     it('does not flag a Free tier plan with zero apps, which carries no reserved cost', async () => {
@@ -678,6 +727,7 @@ describe('ResourceDetectorService', () => {
           },
         ]),
       );
+      appServicePlansListWebAppsMock.mockReturnValue(iterable([{ name: 'app-1' }, { name: 'app-2' }]));
       metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
         options.metricnames === 'CpuPercentage' ? series('CpuPercentage', 3) : series('MemoryPercentage', 15),
       );
@@ -700,6 +750,7 @@ describe('ResourceDetectorService', () => {
           },
         ]),
       );
+      appServicePlansListWebAppsMock.mockReturnValue(iterable([{ name: 'app-1' }]));
       metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) =>
         options.metricnames === 'CpuPercentage' ? series('CpuPercentage', 45) : series('MemoryPercentage', 60),
       );

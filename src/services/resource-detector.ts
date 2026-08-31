@@ -108,7 +108,10 @@ type ComputeClientLike = {
 
 type AppServiceClientLike = {
   webApps: { list: () => AsyncIterable<ResourceLike> | Iterable<ResourceLike> };
-  appServicePlans: { list: () => AsyncIterable<ResourceLike> | Iterable<ResourceLike> };
+  appServicePlans: {
+    list: () => AsyncIterable<ResourceLike> | Iterable<ResourceLike>;
+    listWebApps: (resourceGroupName: string, name: string) => AsyncIterable<ResourceLike> | Iterable<ResourceLike>;
+  };
 };
 
 type StorageClientLike = {
@@ -308,14 +311,26 @@ export class ResourceDetectorService {
           continue;
         }
 
-        const numberOfSites = Number(readProperty<number>(plan, 'numberOfSites') ?? 0);
         const priceQuery = this.buildAppServicePlanPriceQuery(resource, plan);
 
-        if (numberOfSites === 0) {
+        // `numberOfSites` on the list payload is known to be stale or wrong for some
+        // plans (an ARM caching quirk), so it can never be the sole basis for an
+        // "empty plan" finding — that would report an orphan for a plan that
+        // genuinely hosts apps. `listWebApps` queries the apps actually bound to
+        // this plan and is the same source of truth the Azure Portal uses, so it
+        // is the authoritative count here.
+        const actualSiteCount = await this.countWebAppsOnPlan(resource);
+        if (actualSiteCount === undefined) {
+          // Could not confirm independently (missing permission or API failure).
+          // Skip rather than risk a false positive the user cannot trust.
+          continue;
+        }
+
+        if (actualSiteCount === 0) {
           idleResources.push(
             await this.buildIdleResource({
               resource,
-              reason: 'App Service Plan sem nenhum aplicativo implantado, mas continua reservando instâncias e sendo cobrado integralmente',
+              reason: 'App Service Plan sem nenhum aplicativo implantado (confirmado via listagem de apps do plano), mas continua reservando instâncias e sendo cobrado integralmente',
               metrics: [],
               idleScore: 97,
               fallbackMonthlySavings: 75,
@@ -342,7 +357,7 @@ export class ResourceDetectorService {
           idleResources.push(
             await this.buildIdleResource({
               resource,
-              reason: `Plano com ${numberOfSites} aplicativo(s) hospedado(s) e CPU média abaixo de 10% nos últimos 7 dias`,
+              reason: `Plano com ${actualSiteCount} aplicativo(s) hospedado(s) e CPU média abaixo de 10% nos últimos 7 dias`,
               metrics: cpuMetrics,
               idleScore: 68,
               fallbackMonthlySavings: 90,
@@ -361,6 +376,33 @@ export class ResourceDetectorService {
 
       return idleResources;
     }, 'Failed to detect idle App Service Plans');
+  }
+
+  /**
+   * Counts the apps actually bound to an App Service Plan by querying the plan's
+   * own `listWebApps` endpoint, the same data source the Azure Portal uses.
+   *
+   * This exists because the `numberOfSites` field on `appServicePlans.list()` is a
+   * denormalized counter that Azure has been observed to leave stale or at zero
+   * even when apps are deployed on the plan. Trusting it directly turned real,
+   * in-use plans into false "orphan" findings — the single worst kind of mistake
+   * for a report meant to be acted on. Returns `undefined` when the count cannot
+   * be confirmed (missing permission or API failure), so the caller can skip the
+   * finding instead of guessing.
+   */
+  private async countWebAppsOnPlan(resource: Resource): Promise<number | undefined> {
+    try {
+      const resourceGroup = resourceGroupFromId(resource.id);
+      const planName = resource.name;
+      const apps = await toArray(this.appServiceClient.appServicePlans.listWebApps(resourceGroup, planName));
+      return apps.length;
+    } catch (error) {
+      this.logger.warn('Could not confirm app count for App Service Plan; skipping finding', {
+        resourceId: resource.id,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      return undefined;
+    }
   }
 
   /**
