@@ -203,8 +203,9 @@ export const retry = async <T>(
       }
 
       const retryAfterMs = getRetryAfterMs(error);
+      const throttlingBackoff = Math.round(throttleFloorMs * 1.5 ** (attempt - 1));
       const backoffMs = isThrottlingError(error)
-        ? Math.max(throttleFloorMs, baseDelayMs * 2 ** (attempt - 1))
+        ? Math.max(throttlingBackoff, baseDelayMs * 2 ** (attempt - 1))
         : baseDelayMs * 2 ** (attempt - 1);
       const delayMs = Math.min(retryAfterMs ?? backoffMs, maxDelayMs);
 
