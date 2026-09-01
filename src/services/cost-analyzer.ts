@@ -125,9 +125,9 @@ export class CostAnalyzerService {
     const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
 
     try {
+      await this.qpuLimiter.acquire(qpuCost);
       const result = await this.azureClient.executeWithRetry(
         async () => {
-          await this.qpuLimiter.acquire(qpuCost);
           try {
             return await client.query.usage(scope, {
               type: 'ActualCost',
@@ -198,9 +198,9 @@ export class CostAnalyzerService {
     const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
 
     try {
+      await this.qpuLimiter.acquire(qpuCost);
       const result = await this.azureClient.executeWithRetry(
         async () => {
-          await this.qpuLimiter.acquire(qpuCost);
           try {
             return await client.query.usage(scope, {
               type: 'ActualCost',
@@ -319,9 +319,9 @@ export class CostAnalyzerService {
 
     try {
       const qpuCost = QpuLimiter.estimateCost(start, now);
+      await this.qpuLimiter.acquire(qpuCost);
       const result = await this.azureClient.executeWithRetry(
         async () => {
-          await this.qpuLimiter.acquire(qpuCost);
           try {
             return await client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId(subscriptionId)}`, {
               type: 'ActualCost',
