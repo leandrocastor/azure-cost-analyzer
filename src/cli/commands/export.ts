@@ -200,6 +200,7 @@ export default class ExportCommand extends Command {
       for (const [index, subscription] of subscriptions.entries()) {
         const progress = `subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
         let analyzed = false;
+        let subscriptionCostSucceeded = false;
 
         // Requests are issued sequentially rather than in parallel: Azure Cost
         // Management and Monitor throttle aggressively, and bursting across several
@@ -215,6 +216,7 @@ export default class ExportCommand extends Command {
           perSubscriptionCosts.push(summary);
           pricingService ??= new PricingService({ currency: summary.currency });
           analyzed = true;
+          subscriptionCostSucceeded = true;
         } catch (error: unknown) {
           warnings.push(
             `Custos indisponíveis para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
@@ -238,19 +240,19 @@ export default class ExportCommand extends Command {
         // saving on something billed at zero, such as an App Service on the F1 Free tier,
         // is what makes a finance audience discard the entire report.
         //
-        // The per-resource ledger is fetched regardless of whether idle findings exist:
-        // the aging/ownerless detector needs it too, to confirm a resource is still
-        // costing real money before flagging it as a governance risk.
-        spinner.text = `Fetching billed cost per resource for ${progress}`;
-        try {
-          const ledger = await costAnalyzer.queryResourceCosts(
-            subscription.id,
-            startDate.toISOString().slice(0, 10),
-            endDate.toISOString().slice(0, 10),
-          );
-          resourceLedgers.push(ledger);
+        // The per-resource ledger is only fetched if Cost Management is accessible and
+        // there are idle findings or resources to reconcile, preventing useless 429 bursts
+        // on unsupported benefit subscriptions.
+        if (subscriptionCostSucceeded && subscriptionFindings.length > 0) {
+          spinner.text = `Fetching billed cost per resource for ${progress}`;
+          try {
+            const ledger = await costAnalyzer.queryResourceCosts(
+              subscription.id,
+              startDate.toISOString().slice(0, 10),
+              endDate.toISOString().slice(0, 10),
+            );
+            resourceLedgers.push(ledger);
 
-          if (subscriptionFindings.length > 0) {
             const reconciliation = new CostReconciliationService().reconcile(subscriptionFindings, ledger);
             subscriptionFindings = reconciliation.idleResources;
 
@@ -261,25 +263,25 @@ export default class ExportCommand extends Command {
                   .join(', ')}.`,
               );
             }
+          } catch (error: unknown) {
+            warnings.push(
+              `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
+            );
           }
-        } catch (error: unknown) {
-          warnings.push(
-            `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
-          );
         }
 
-        // Anomaly detection needs a real monthly trend, not just the analyzed period,
-        // so it always looks at a fixed trailing window regardless of --period. A
-        // failure here only disables the anomalies section; it never blocks the rest
-        // of the report.
-        spinner.text = `Fetching monthly cost trend for ${progress}`;
-        try {
-          const entries = await costAnalyzer.getCostsByPeriod(ANOMALY_DETECTION_MONTHS, subscription.id);
-          costEntries.push(...entries);
-        } catch (error: unknown) {
-          warnings.push(
-            `Tendência de custo indisponível para detecção de anomalias em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
-          );
+        // Anomaly detection needs a real monthly trend, only queried if the subscription
+        // has valid Cost Management access.
+        if (subscriptionCostSucceeded) {
+          spinner.text = `Fetching monthly cost trend for ${progress}`;
+          try {
+            const entries = await costAnalyzer.getCostsByPeriod(ANOMALY_DETECTION_MONTHS, subscription.id);
+            costEntries.push(...entries);
+          } catch (error: unknown) {
+            warnings.push(
+              `Tendência de custo indisponível para detecção de anomalias em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+            );
+          }
         }
 
         // Resource Graph is not subject to the same throttling as Cost Management, and
