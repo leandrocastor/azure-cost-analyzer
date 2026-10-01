@@ -44,7 +44,7 @@
     "@oclif/plugin-help": "latest",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
-    "compression": "^1.7.5",
+    "compression": "^1.8.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.21.1",
