@@ -294,8 +294,7 @@ describe('CLI command classes', () => {
     expect(spinner.fail).toHaveBeenCalledWith('export failed');
   });
 
-  it('analyzes every accessible subscription when none is configured or passed', async () => {
-    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+  it('analyzes every accessible subscription when no flag is passed', async () => {
     await ExportCommand.run(['--output', reportOutputPath]);
     expect(azureClientMock.listAccessibleSubscriptions).toHaveBeenCalledOnce();
     expect(costAnalyzerMock.queryCosts).toHaveBeenCalledWith('sub-a', expect.any(String), expect.any(String), 'service');
@@ -307,7 +306,6 @@ describe('CLI command classes', () => {
   });
 
   it('still generates a report when one subscription is throttled', async () => {
-    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
     costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('Too many requests. Please retry.'));
     const warnSpy = vi.spyOn(ExportCommand.prototype, 'warn').mockImplementation(((message: string) => message) as never);
 

@@ -44,11 +44,13 @@ const defaultOutputPath = (): string => {
 const ANOMALY_DETECTION_MONTHS = 6;
 
 /**
- * Resolves which subscriptions the report should cover. When an explicit
- * subscription is given (flag or environment), only that one is analyzed.
- * Otherwise every enabled subscription the authenticated identity can access
- * in its tenant(s) is discovered and analyzed, so the command works out of
- * the box in Azure Cloud Shell without any prior configuration.
+ * Resolves which subscriptions the report should cover. An explicit
+ * subscription flag restricts the report to that subscription; otherwise every
+ * enabled subscription the authenticated identity can access is discovered.
+ *
+ * AZURE_SUBSCRIPTION_ID is intentionally not used as an implicit restriction
+ * here. It is still used by the single-subscription commands, but using it for
+ * export would silently omit the other subscriptions visible to the identity.
  */
 const resolveSubscriptions = async (
   azureClient: AzureClientService,
@@ -56,11 +58,6 @@ const resolveSubscriptions = async (
 ): Promise<AccessibleSubscription[]> => {
   if (explicitSubscription) {
     return [{ id: explicitSubscription, displayName: explicitSubscription }];
-  }
-
-  const configured = azureClient.getConfiguredSubscriptionId();
-  if (configured) {
-    return [{ id: configured, displayName: configured }];
   }
 
   return azureClient.listAccessibleSubscriptions();
@@ -516,4 +513,3 @@ export default class ExportCommand extends Command {
     }
   }
 }
-

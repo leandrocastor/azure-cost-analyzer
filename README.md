@@ -57,7 +57,19 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 
 O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
 
-**Não é necessário configurar `AZURE_SUBSCRIPTION_ID` nem `.env`:** se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório.
+Se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório. `AZURE_SUBSCRIPTION_ID` pode continuar definido para os comandos de assinatura única e não limita mais o `export`; use `--subscription` quando quiser restringir o relatório.
+
+#### Cloud Shell sem storage (sessão efêmera)
+
+Se você iniciar o Cloud Shell com **No storage account required**, o diretório `$HOME/clouddrive` não estará montado. Nesse caso, use um caminho no diretório atual:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "./azure-cost-report.html"
+```
+
+Esse é o mesmo comando `export`; muda apenas o caminho passado em `--output`. O arquivo é gravado no sistema de arquivos temporário da sessão do Cloud Shell. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), os arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Para persistir o arquivo entre sessões, use o caminho em `$HOME/clouddrive` do exemplo anterior com storage montado ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cota de consultas do Cost Management (QPU)
 
@@ -81,7 +93,7 @@ Copie `.env.example` para `.env` e atualize os valores.
 
 | Variável | Obrigatório | Padrão | Descrição |
 | --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | Não | - | Subscription do Azure a ser analisada. Se omitida, o comando `export` descobre e analisa todas as assinaturas acessíveis; os demais comandos exigem `--subscription` |
+| `AZURE_SUBSCRIPTION_ID` | Não | - | Subscription padrão para os comandos de assinatura única. O comando `export` analisa todas as assinaturas acessíveis, a menos que `--subscription` seja informado |
 | `AZURE_TENANT_ID` | Somente service principal | - | Tenant do Microsoft Entra |
 | `AZURE_CLIENT_ID` | Service principal ou managed identity opcional | - | Id do client/application |
 | `AZURE_CLIENT_SECRET` | Somente service principal | - | Client secret |

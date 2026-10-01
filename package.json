@@ -42,7 +42,6 @@
     "@azure/identity": "latest",
     "@oclif/core": "latest",
     "@oclif/plugin-help": "latest",
-    "@oclif/plugin-plugins": "latest",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
     "compression": "^1.7.5",
