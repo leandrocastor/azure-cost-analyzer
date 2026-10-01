@@ -47,21 +47,7 @@ npm install -g .
 
 Ideal for a quick analysis directly in Azure Cloud Shell, without cloning or permanently installing anything.
 
-> **Important:** use Cloud Shell in **Bash** mode (not PowerShell) to run the command below.
-
-```bash
-npx --yes github:leandrocastor/azure-cost-analyzer export \
-  --period 3 \
-  --output "$HOME/clouddrive/azure-cost-report.html"
-```
-
-`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity.
-
-**No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
-
-#### Cloud Shell without storage (ephemeral session)
-
-If you start Cloud Shell with **No storage account required**, `$HOME/clouddrive` is not mounted, so the previous command fails with `ENOENT`. In this case, use the command below: `--output "./azure-cost-report.html"` saves the report in the current directory, which exists even without mounted storage.
+> **Important:** use Cloud Shell in **Bash** mode (not PowerShell) to run the command below. This example saves to the current directory and works even when Cloud Shell is started without storage.
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
@@ -69,7 +55,21 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "./azure-cost-report.html"
 ```
 
-The report, along with the optional remediation script, is written to the Cloud Shell session's temporary filesystem. According to the [official documentation for ephemeral sessions](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), files are deleted when the session ends; download or transfer the report before closing/restarting Cloud Shell if you want to keep it. To persist the file across sessions, use the `$HOME/clouddrive` path from the previous example with storage mounted ([how Cloud Shell storage persists files](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
+`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity.
+
+**No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
+
+#### Cloud Shell with mounted storage
+
+If Cloud Shell is connected to storage, you can also save the report to the persistent `clouddrive` directory:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "$HOME/clouddrive/azure-cost-report.html"
+```
+
+Without storage, the report and optional remediation script are written to the Cloud Shell session's temporary filesystem. According to the [official documentation for ephemeral sessions](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), these files are deleted when the session ends; download or transfer the report before closing/restarting Cloud Shell if you want to keep it. With storage mounted, the `clouddrive` path persists across sessions ([how Cloud Shell storage persists files](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cost Management query quota (QPU)
 

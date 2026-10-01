@@ -47,21 +47,7 @@ npm install -g .
 
 Ideal para uma análise rápida direto no Azure Cloud Shell, sem precisar clonar ou instalar nada permanentemente.
 
-> **Importante:** use o Cloud Shell no modo **Bash** (não PowerShell) para rodar o comando abaixo.
-
-```bash
-npx --yes github:leandrocastor/azure-cost-analyzer export \
-  --period 3 \
-  --output "$HOME/clouddrive/azure-cost-report.html"
-```
-
-O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
-
-Se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório. `AZURE_SUBSCRIPTION_ID` pode continuar definido para os comandos de assinatura única e não limita mais o `export`; use `--subscription` quando quiser restringir o relatório.
-
-#### Cloud Shell sem storage (sessão efêmera)
-
-Se você iniciar o Cloud Shell com **No storage account required**, o diretório `$HOME/clouddrive` não estará montado e o comando anterior falhará com `ENOENT`. Para esse caso, use o comando abaixo: `--output "./azure-cost-report.html"` salva o relatório no diretório atual, que existe mesmo sem storage montado.
+> **Importante:** use o Cloud Shell no modo **Bash** (não PowerShell) para rodar o comando abaixo. Este exemplo salva no diretório atual e funciona mesmo quando você inicia o Cloud Shell sem storage.
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
@@ -69,7 +55,21 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "./azure-cost-report.html"
 ```
 
-O arquivo, assim como o script de remediação opcional, fica no sistema de arquivos temporário da sessão do Cloud Shell. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), os arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Para persistir o arquivo entre sessões, use o caminho em `$HOME/clouddrive` do exemplo anterior com storage montado ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
+O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
+
+Se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório. `AZURE_SUBSCRIPTION_ID` pode continuar definido para os comandos de assinatura única e não limita mais o `export`; use `--subscription` quando quiser restringir o relatório.
+
+#### Cloud Shell com storage montado
+
+Se o Cloud Shell estiver conectado ao storage, você também pode salvar o relatório no diretório persistente `clouddrive`:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "$HOME/clouddrive/azure-cost-report.html"
+```
+
+Sem storage, o relatório e o script de remediação opcional ficam no sistema de arquivos temporário da sessão. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), esses arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Com storage montado, o caminho `clouddrive` persiste entre sessões ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cota de consultas do Cost Management (QPU)
 
