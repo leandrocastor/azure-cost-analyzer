@@ -47,7 +47,21 @@ npm install -g .
 
 Ideal para uma análise rápida direto no Azure Cloud Shell, sem precisar clonar ou instalar nada permanentemente.
 
-> **Importante:** use o Cloud Shell no modo **Bash** (não PowerShell) para rodar o comando abaixo.
+> **Importante:** use o Cloud Shell no modo **Bash** (não PowerShell) para rodar o comando abaixo. Este exemplo salva no diretório atual e funciona mesmo quando você inicia o Cloud Shell sem storage.
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "./azure-cost-report.html"
+```
+
+O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
+
+Se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório. `AZURE_SUBSCRIPTION_ID` pode continuar definido para os comandos de assinatura única e não limita mais o `export`; use `--subscription` quando quiser restringir o relatório.
+
+#### Cloud Shell com storage montado
+
+Se o Cloud Shell estiver conectado ao storage, você também pode salvar o relatório no diretório persistente `clouddrive`:
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
@@ -55,9 +69,7 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "$HOME/clouddrive/azure-cost-report.html"
 ```
 
-O `npx` baixa o repositório, executa o build automaticamente (via script `prepare`) e roda o comando `export` uma única vez. Como o Cloud Shell já está autenticado (`az login` implícito), a análise usa a mesma identidade da sessão.
-
-**Não é necessário configurar `AZURE_SUBSCRIPTION_ID` nem `.env`:** se nenhuma assinatura for informada via `--subscription`, o comando `export` descobre automaticamente e analisa **todas as assinaturas habilitadas** às quais a identidade autenticada tem acesso no tenant, consolidando os custos, recursos ociosos e recomendações de todas elas em um único relatório.
+Sem storage, o relatório e o script de remediação opcional ficam no sistema de arquivos temporário da sessão. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), esses arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Com storage montado, o caminho `clouddrive` persiste entre sessões ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cota de consultas do Cost Management (QPU)
 
@@ -81,7 +93,7 @@ Copie `.env.example` para `.env` e atualize os valores.
 
 | Variável | Obrigatório | Padrão | Descrição |
 | --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | Não | - | Subscription do Azure a ser analisada. Se omitida, o comando `export` descobre e analisa todas as assinaturas acessíveis; os demais comandos exigem `--subscription` |
+| `AZURE_SUBSCRIPTION_ID` | Não | - | Subscription padrão para os comandos de assinatura única. O comando `export` analisa todas as assinaturas acessíveis, a menos que `--subscription` seja informado |
 | `AZURE_TENANT_ID` | Somente service principal | - | Tenant do Microsoft Entra |
 | `AZURE_CLIENT_ID` | Service principal ou managed identity opcional | - | Id do client/application |
 | `AZURE_CLIENT_SECRET` | Somente service principal | - | Client secret |
@@ -185,12 +197,14 @@ Ações classificadas como risco alto exigem que o operador digite `CONFIRMO` an
 Guarde os relatórios gerados e compare-os para ver a evolução do ambiente:
 
 ```bash
-cost-analyzer export --period 1 --output ./relatorio-agosto.html
+cost-analyzer export --period 3 --output ./relatorio-agosto.html
 # ... um mês depois ...
-cost-analyzer export --period 1 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
+cost-analyzer export --period 3 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
 ```
 
 O relatório passa a exibir a variação total, os maiores movimentos por service e por resource group, além dos recursos ociosos que surgiram ou foram resolvidos.
+
+Também é exibido o **FinOps Value Ledger**: para cada achado resolvido, compara o custo faturado do recurso entre meses fechados e mostra a redução observada. O comparativo só é considerado conclusivo quando os dois relatórios têm cobertura de custos por recurso para meses distintos; relatórios antigos sem essa evidência aparecem como não mensurados, nunca como economia. Uma redução observada não prova que a recomendação foi sua causa. O relatório espera sete dias após o fechamento do mês para absorver atualizações da fatura; mantenha `--period 3` para cobrir esses meses. Essa verificação consulta o Cost Management por recurso apenas para assinaturas com achados anteriores que já tenham evidência de custo e pode consumir QPU adicional.
 
 #### Desperdício por responsável
 

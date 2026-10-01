@@ -47,7 +47,21 @@ npm install -g .
 
 Ideal for a quick analysis directly in Azure Cloud Shell, without cloning or permanently installing anything.
 
-> **Important:** use Cloud Shell in **Bash** mode (not PowerShell) to run the command below.
+> **Important:** use Cloud Shell in **Bash** mode (not PowerShell) to run the command below. This example saves to the current directory and works even when Cloud Shell is started without storage.
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "./azure-cost-report.html"
+```
+
+`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity.
+
+**No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
+
+#### Cloud Shell with mounted storage
+
+If Cloud Shell is connected to storage, you can also save the report to the persistent `clouddrive` directory:
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
@@ -55,9 +69,7 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
   --output "$HOME/clouddrive/azure-cost-report.html"
 ```
 
-`npx` downloads the repository, runs the build automatically (via the `prepare` script), and executes the `export` command once. Since Cloud Shell is already authenticated (implicit `az login`), the analysis uses the same session identity.
-
-**No need to configure `AZURE_SUBSCRIPTION_ID` or a `.env` file:** if no subscription is passed via `--subscription`, the `export` command automatically discovers and analyzes **every enabled subscription** the authenticated identity can access in its tenant, consolidating costs, idle resources, and recommendations from all of them into a single report.
+Without storage, the report and optional remediation script are written to the Cloud Shell session's temporary filesystem. According to the [official documentation for ephemeral sessions](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), these files are deleted when the session ends; download or transfer the report before closing/restarting Cloud Shell if you want to keep it. With storage mounted, the `clouddrive` path persists across sessions ([how Cloud Shell storage persists files](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cost Management query quota (QPU)
 
@@ -73,7 +85,7 @@ Four subscriptions with `--period 3` therefore consume 12 QPU and exhaust the 10
 
 To speed things up, lower `--period` or narrow the scope with `--subscription`.
 
-Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command — but those commands require a single subscription (via `--subscription` or `AZURE_SUBSCRIPTION_ID`).
+Any other command (`costs`, `detect`, `recommend`, `dashboard`) can be run the same way — just swap `export` for the desired command — but those commands require a single subscription (via `--subscription` or `AZURE_SUBSCRIPTION_ID`). The `export` command analyzes all accessible subscriptions unless `--subscription` is provided; `AZURE_SUBSCRIPTION_ID` does not restrict it.
 
 ## Configuration
 
@@ -81,7 +93,7 @@ Copy `.env.example` to `.env` and update the values.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `AZURE_SUBSCRIPTION_ID` | No | - | Azure subscription to analyze. If omitted, the `export` command discovers and analyzes every accessible subscription; other commands require `--subscription` |
+| `AZURE_SUBSCRIPTION_ID` | No | - | Default subscription for single-subscription commands. `export` analyzes every accessible subscription unless `--subscription` is provided |
 | `AZURE_TENANT_ID` | Service principal only | - | Microsoft Entra tenant |
 | `AZURE_CLIENT_ID` | Service principal or optional managed identity | - | Client/application id |
 | `AZURE_CLIENT_SECRET` | Service principal only | - | Client secret |
@@ -185,12 +197,14 @@ High-risk actions require the operator to type `CONFIRMO` before proceeding. Eve
 Keep the generated reports and diff them to see how the environment evolves:
 
 ```bash
-cost-analyzer export --period 1 --output ./report-august.html
+cost-analyzer export --period 3 --output ./report-august.html
 # ... one month later ...
-cost-analyzer export --period 1 --output ./report-september.html --compare ./report-august.html
+cost-analyzer export --period 3 --output ./report-september.html --compare ./report-august.html
 ```
 
 The report then shows the total variation, the largest movements by service and resource group, and which idle resources appeared or were resolved.
+
+It also includes a **FinOps Value Ledger**: for each resolved finding, it compares that resource's billed cost across closed months and reports the observed reduction. A comparison is conclusive only when both reports cover per-resource costs for distinct months; older reports without that evidence are marked unmeasured, never as savings. An observed reduction does not prove the recommendation caused it. The report waits seven days after month-end to allow for billing updates; keep `--period 3` to cover these months. This check queries per-resource Cost Management data only for subscriptions with previously flagged resources that already have cost evidence, and may consume additional QPUs.
 
 #### Waste by owner
 

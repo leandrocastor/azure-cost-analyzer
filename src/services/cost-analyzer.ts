@@ -25,8 +25,10 @@ type CostGroupBy = 'service' | 'resource-group' | 'location' | 'tags';
  */
 export type ResourceCostLedger = {
   currency: string;
-  /** Every month covered by the query, sorted ascending, as YYYY-MM. */
+  /** Months with billed rows, sorted ascending, as YYYY-MM. */
   months: string[];
+  /** Every month covered by the query, including months with no billed rows. */
+  coveredMonths?: string[];
   resources: Record<string, Record<string, number>>;
 };
 
@@ -232,7 +234,7 @@ export class CostAnalyzerService {
         { maxAttempts: 8, maxDelayMs: 180_000 },
       );
 
-      const ledger = this.toResourceLedger(result);
+      const ledger = this.toResourceLedger(result, startDate, endDate);
       this.cache.set(cacheKey, ledger);
       return ledger;
     } catch (error: unknown) {
@@ -248,11 +250,21 @@ export class CostAnalyzerService {
    * lowercased because Azure is inconsistent about their casing between the billing
    * and the management APIs, and a casing mismatch would look like a missing charge.
    */
-  private toResourceLedger(result: QueryResult): ResourceCostLedger {
+  private toResourceLedger(result: QueryResult, startDate: string, endDate: string): ResourceCostLedger {
     const columns = (result.columns ?? []).map((column) => column.name ?? '');
     const rows = result.rows ?? [];
     const resources: Record<string, Record<string, number>> = {};
     const months = new Set<string>();
+    const coveredMonths = new Set<string>();
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    for (
+      const month = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+      month <= end;
+      month.setUTCMonth(month.getUTCMonth() + 1)
+    ) {
+      coveredMonths.add(month.toISOString().slice(0, 7));
+    }
     let currency = 'USD';
 
     for (const row of rows) {
@@ -283,6 +295,7 @@ export class CostAnalyzerService {
     return {
       currency,
       months: [...months].sort(),
+      coveredMonths: [...coveredMonths].sort(),
       resources,
     };
   }

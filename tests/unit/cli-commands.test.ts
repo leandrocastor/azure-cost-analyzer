@@ -3,6 +3,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { validEnv, mockCostSummary, mockIdleResources, mockRecommendations } from '../fixtures/mock-data';
+import { generateStaticReport } from '@/dashboard/report';
 
 const spinner = {
   start: vi.fn(() => spinner),
@@ -92,6 +93,7 @@ import RecommendCommand from '@/cli/commands/recommend';
 
 const outputPath = path.resolve(__dirname, '../fixtures/cost-command-output.csv');
 const reportOutputPath = path.resolve(__dirname, '../fixtures/report-command-output.html');
+const previousReportPath = path.resolve(__dirname, '../fixtures/previous-report-command-output.html');
 const remediationScriptPath = path.resolve(__dirname, '../fixtures/apply-remediation.sh');
 
 describe('CLI command classes', () => {
@@ -105,6 +107,7 @@ describe('CLI command classes', () => {
     azureClientMock.getConfiguredSubscriptionId.mockClear();
     azureClientMock.listAccessibleSubscriptions.mockClear();
     costAnalyzerMock.queryCosts.mockClear();
+    costAnalyzerMock.queryResourceCosts.mockClear();
     costAnalyzerMock.getCostsByPeriod.mockClear();
     costAnalyzerMock.detectAnomalies.mockClear();
     resourceDetectorMock.detectAll.mockClear();
@@ -128,6 +131,11 @@ describe('CLI command classes', () => {
       { id: 'sub-b', displayName: 'Subscription B' },
     ]);
     costAnalyzerMock.queryCosts.mockResolvedValue(mockCostSummary);
+    costAnalyzerMock.queryResourceCosts.mockResolvedValue({
+      currency: mockCostSummary.currency,
+      months: [],
+      resources: {},
+    });
     costAnalyzerMock.getCostsByPeriod.mockResolvedValue([]);
     costAnalyzerMock.detectAnomalies.mockReturnValue([]);
     resourceDetectorMock.detectAll.mockResolvedValue(mockIdleResources);
@@ -141,6 +149,9 @@ describe('CLI command classes', () => {
     if (existsSync(remediationScriptPath)) {
       unlinkSync(remediationScriptPath);
     }
+    if (existsSync(previousReportPath)) {
+      unlinkSync(previousReportPath);
+    }
   });
 
   afterAll(() => {
@@ -152,6 +163,9 @@ describe('CLI command classes', () => {
     }
     if (existsSync(remediationScriptPath)) {
       unlinkSync(remediationScriptPath);
+    }
+    if (existsSync(previousReportPath)) {
+      unlinkSync(previousReportPath);
     }
   });
 
@@ -280,8 +294,7 @@ describe('CLI command classes', () => {
     expect(spinner.fail).toHaveBeenCalledWith('export failed');
   });
 
-  it('analyzes every accessible subscription when none is configured or passed', async () => {
-    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
+  it('analyzes every accessible subscription when no flag is passed', async () => {
     await ExportCommand.run(['--output', reportOutputPath]);
     expect(azureClientMock.listAccessibleSubscriptions).toHaveBeenCalledOnce();
     expect(costAnalyzerMock.queryCosts).toHaveBeenCalledWith('sub-a', expect.any(String), expect.any(String), 'service');
@@ -293,7 +306,6 @@ describe('CLI command classes', () => {
   });
 
   it('still generates a report when one subscription is throttled', async () => {
-    azureClientMock.getConfiguredSubscriptionId.mockReturnValueOnce(undefined);
     costAnalyzerMock.queryCosts.mockRejectedValueOnce(new Error('Too many requests. Please retry.'));
     const warnSpy = vi.spyOn(ExportCommand.prototype, 'warn').mockImplementation(((message: string) => message) as never);
 
@@ -382,5 +394,62 @@ describe('CLI command classes', () => {
     await expect(ExportCommand.run(['--output', reportOutputPath])).rejects.toThrow(
       'No data could be collected from any subscription',
     );
+  });
+
+  it('queries per-resource billing for previously flagged subscriptions to measure resolved findings', async () => {
+    const previousFinding = {
+      ...mockIdleResources[0]!,
+      resource: {
+        ...mockIdleResources[0]!.resource,
+        id: '/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-a',
+      },
+      evidence: {
+        observationWindowDays: 30,
+        dataPoints: 30,
+        metrics: [],
+        savingsBasis: 'observed-cost' as const,
+        savingsBasisDetail: 'Custo observado na fatura.',
+        confidence: 'high' as const,
+        billed: {
+          observedTotal: 100,
+          currency: 'USD',
+          monthly: { '2026-05': 100 },
+          lastMonthWithCost: '2026-05',
+          latestMonth: '2026-06',
+          billingStopped: false,
+          coveredMonths: ['2026-05', '2026-06'],
+        },
+      },
+    };
+    writeFileSync(
+      previousReportPath,
+      generateStaticReport({
+        generatedAt: '2026-06-15T12:00:00.000Z',
+        subscriptionId: 'sub-a',
+        costs: mockCostSummary,
+        idleResources: [previousFinding],
+        recommendations: [],
+      }),
+    );
+    resourceDetectorMock.detectAll.mockResolvedValue([]);
+
+    await ExportCommand.run([
+      '--output',
+      reportOutputPath,
+      '--subscription',
+      'sub-a',
+      '--compare',
+      previousReportPath,
+      '--period',
+      '3',
+    ]);
+
+    expect(costAnalyzerMock.queryResourceCosts).toHaveBeenCalledTimes(1);
+    expect(costAnalyzerMock.queryResourceCosts).toHaveBeenCalledWith(
+      'sub-a',
+      expect.any(String),
+      expect.any(String),
+    );
+    expect(readFileSync(reportOutputPath, 'utf8')).toContain('"status":"awaiting_period"');
   });
 });

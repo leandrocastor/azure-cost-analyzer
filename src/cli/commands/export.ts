@@ -13,6 +13,7 @@ import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
+import { SavingsRealizationService } from '@/services/savings-realization';
 import { DecisionEngineService } from '@/services/decision-engine';
 import { EnvironmentDetectorService } from '@/services/environment-detector';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
@@ -43,11 +44,13 @@ const defaultOutputPath = (): string => {
 const ANOMALY_DETECTION_MONTHS = 6;
 
 /**
- * Resolves which subscriptions the report should cover. When an explicit
- * subscription is given (flag or environment), only that one is analyzed.
- * Otherwise every enabled subscription the authenticated identity can access
- * in its tenant(s) is discovered and analyzed, so the command works out of
- * the box in Azure Cloud Shell without any prior configuration.
+ * Resolves which subscriptions the report should cover. An explicit
+ * subscription flag restricts the report to that subscription; otherwise every
+ * enabled subscription the authenticated identity can access is discovered.
+ *
+ * AZURE_SUBSCRIPTION_ID is intentionally not used as an implicit restriction
+ * here. It is still used by the single-subscription commands, but using it for
+ * export would silently omit the other subscriptions visible to the identity.
  */
 const resolveSubscriptions = async (
   azureClient: AzureClientService,
@@ -55,11 +58,6 @@ const resolveSubscriptions = async (
 ): Promise<AccessibleSubscription[]> => {
   if (explicitSubscription) {
     return [{ id: explicitSubscription, displayName: explicitSubscription }];
-  }
-
-  const configured = azureClient.getConfiguredSubscriptionId();
-  if (configured) {
-    return [{ id: configured, displayName: configured }];
   }
 
   return azureClient.listAccessibleSubscriptions();
@@ -70,6 +68,11 @@ const addBucket = (target: Record<string, number>, source: Record<string, number
     target[key] = (target[key] ?? 0) + value;
   }
 };
+
+const RESOURCE_SUBSCRIPTION_PATTERN = /\/subscriptions\/([^/]+)/i;
+
+const subscriptionIdFromResourceId = (resourceId: string): string | undefined =>
+  RESOURCE_SUBSCRIPTION_PATTERN.exec(resourceId)?.[1]?.toLowerCase();
 
 /**
  * Merges per-subscription cost summaries into a single tenant-wide summary.
@@ -103,6 +106,9 @@ const mergeResourceLedgers = (ledgers: ResourceCostLedger[]): ResourceCostLedger
   const merged: ResourceCostLedger = {
     currency: ledgers[0]?.currency ?? 'USD',
     months: [...new Set(ledgers.flatMap((ledger) => ledger.months))].sort(),
+    coveredMonths: [
+      ...new Set(ledgers.flatMap((ledger) => ledger.coveredMonths ?? ledger.months)),
+    ].sort(),
     resources: {},
   };
 
@@ -139,7 +145,7 @@ export default class ExportCommand extends Command {
     compare: Flags.string({
       char: 'c',
       description:
-        'Path to a previously generated report (HTML or JSON) to compare against, revealing what changed since then.',
+        'Path to a previous report (HTML or JSON) for cost diff and per-resource billed-cost tracking on resolved findings.',
     }),
     'owner-tags': Flags.string({
       description:
@@ -178,8 +184,20 @@ export default class ExportCommand extends Command {
       const analyzedSubscriptions: AccessibleSubscription[] = [];
       const inventory: Resource[] = [];
       const resourceLedgers: ResourceCostLedger[] = [];
+      const resourceLedgersBySubscription = new Map<string, ResourceCostLedger>();
       const costEntries: CostEntry[] = [];
       const creationTimes = new Map<string, string>();
+
+      let previousSnapshot: ReportSnapshot | undefined;
+      if (flags.compare) {
+        try {
+          previousSnapshot = await new CostDiffService().loadSnapshot(path.resolve(flags.compare));
+        } catch (error: unknown) {
+          warnings.push(
+            `Comparativo indisponível: ${error instanceof Error ? error.message : 'erro desconhecido'}`,
+          );
+        }
+      }
 
       // Pricing is looked up in the currency Azure bills the tenant in, which is only
       // known after the first cost query, so the service is created lazily.
@@ -201,6 +219,7 @@ export default class ExportCommand extends Command {
         const progress = `subscription ${index + 1}/${subscriptions.length}: ${subscription.displayName}`;
         let analyzed = false;
         let subscriptionCostSucceeded = false;
+        let subscriptionBillingCurrency: string | undefined;
 
         // Requests are issued sequentially rather than in parallel: Azure Cost
         // Management and Monitor throttle aggressively, and bursting across several
@@ -214,6 +233,7 @@ export default class ExportCommand extends Command {
             'service',
           );
           perSubscriptionCosts.push(summary);
+          subscriptionBillingCurrency = summary.currency;
           pricingService ??= new PricingService({ currency: summary.currency });
           analyzed = true;
           subscriptionCostSucceeded = true;
@@ -240,32 +260,47 @@ export default class ExportCommand extends Command {
         // saving on something billed at zero, such as an App Service on the F1 Free tier,
         // is what makes a finance audience discard the entire report.
         //
-        // The per-resource ledger is only fetched if Cost Management is accessible and
-        // there are idle findings or resources to reconcile, preventing useless 429 bursts
-        // on unsupported benefit subscriptions.
-        if (subscriptionCostSucceeded && subscriptionFindings.length > 0) {
+        // Include resources from the baseline as well as current findings: resolved
+        // recommendations need a fresh per-resource invoice check before reporting impact.
+        const previousFindingsForSubscription =
+          previousSnapshot?.idleResources.filter(
+            (item) =>
+              subscriptionIdFromResourceId(item.resource.id) === subscription.id.toLowerCase() &&
+              (item.evidence?.billed?.coveredMonths?.length ?? 0) > 0,
+          ) ?? [];
+        if (
+          subscriptionCostSucceeded &&
+          (subscriptionFindings.length > 0 || previousFindingsForSubscription.length > 0)
+        ) {
           spinner.text = `Fetching billed cost per resource for ${progress}`;
           try {
-            const ledger = await costAnalyzer.queryResourceCosts(
+            const queriedLedger = await costAnalyzer.queryResourceCosts(
               subscription.id,
               startDate.toISOString().slice(0, 10),
               endDate.toISOString().slice(0, 10),
             );
+            const ledger =
+              Object.keys(queriedLedger.resources).length === 0 && subscriptionBillingCurrency
+                ? { ...queriedLedger, currency: subscriptionBillingCurrency }
+                : queriedLedger;
             resourceLedgers.push(ledger);
+            resourceLedgersBySubscription.set(subscription.id.toLowerCase(), ledger);
 
-            const reconciliation = new CostReconciliationService().reconcile(subscriptionFindings, ledger);
-            subscriptionFindings = reconciliation.idleResources;
+            if (subscriptionFindings.length > 0) {
+              const reconciliation = new CostReconciliationService().reconcile(subscriptionFindings, ledger);
+              subscriptionFindings = reconciliation.idleResources;
 
-            if (reconciliation.discarded.length > 0) {
-              warnings.push(
-                `${reconciliation.discarded.length} recurso(s) de "${subscription.displayName}" foram descartados por não gerarem custo faturado: ${reconciliation.discarded
-                  .map((item) => item.name)
-                  .join(', ')}.`,
-              );
+              if (reconciliation.discarded.length > 0) {
+                warnings.push(
+                  `${reconciliation.discarded.length} recurso(s) de "${subscription.displayName}" foram descartados por não gerarem custo faturado: ${reconciliation.discarded
+                    .map((item) => item.name)
+                    .join(', ')}.`,
+                );
+              }
             }
           } catch (error: unknown) {
             warnings.push(
-              `Sem conciliação com o custo faturado em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, não confirmadas pela fatura.`,
+              `Sem consulta de custo por recurso em "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}. As economias exibidas são projeções por preço de lista, e a medição de resoluções pode ficar indisponível.`,
             );
           }
         }
@@ -375,14 +410,10 @@ export default class ExportCommand extends Command {
       // Comparing against a previous report is best-effort: a missing or malformed
       // baseline must never prevent the current report from being produced.
       let diff: CostDiff | undefined;
-      let previousSnapshot: ReportSnapshot | undefined;
-      if (flags.compare) {
+      if (previousSnapshot) {
         spinner.text = `Comparing against ${flags.compare}...`;
         try {
-          const costDiffService = new CostDiffService();
-          const previous = await costDiffService.loadSnapshot(path.resolve(flags.compare));
-          previousSnapshot = previous;
-          diff = costDiffService.compare(previous, {
+          diff = new CostDiffService().compare(previousSnapshot, {
             generatedAt,
             subscriptionId: subscriptionLabel,
             costs,
@@ -401,6 +432,15 @@ export default class ExportCommand extends Command {
       if (previousSnapshot) {
         inaction = new InactionCostService().analyze(previousSnapshot, idleResources);
       }
+
+      const savingsRealization = previousSnapshot
+        ? new SavingsRealizationService().analyze(
+            previousSnapshot,
+            idleResources,
+            generatedAt,
+            resourceLedgersBySubscription,
+          )
+        : undefined;
 
       const remediationPlans = flags['no-remediation']
         ? []
@@ -430,6 +470,7 @@ export default class ExportCommand extends Command {
         remediationPlans,
         waf,
         inaction,
+        savingsRealization,
         decisionEngine,
         aging,
         forgottenEnvironments,
@@ -472,4 +513,3 @@ export default class ExportCommand extends Command {
     }
   }
 }
-

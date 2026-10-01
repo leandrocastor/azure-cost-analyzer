@@ -243,6 +243,39 @@ describe('generateStaticReport — seções de diferenciação', () => {
     expect(html).toContain('id="decision-section" hidden');
   });
 
+  it('renders the per-resource FinOps value ledger without implying causality', () => {
+    const html = generateStaticReport({
+      ...fullData,
+      savingsRealization: {
+        comparedTo: '2026-06-15T12:00:00.000Z',
+        items: [
+          {
+            resourceId: '/subscriptions/sub/disks/disk-a',
+            resourceName: 'disk-a',
+            finding: 'Disco sem anexação',
+            status: 'verified_reduction',
+            baselineMonth: '2026-05',
+            currentMonth: '2026-07',
+            baselineCost: 100,
+            currentCost: 20,
+            monthlyReduction: 80,
+            currency: 'BRL',
+            explanation: 'Redução observada na fatura.',
+          },
+        ],
+        verifiedMonthlyReductionByCurrency: { BRL: 80 },
+        verifiedCount: 1,
+        unmeasuredCount: 0,
+        summary: 'Redução observada, sem atribuição causal.',
+      },
+    });
+
+    expect(html).toContain('"verifiedMonthlyReductionByCurrency":{"BRL":80}');
+    expect(html).toContain('FinOps Value Ledger');
+    expect(html).toContain('não que a recomendação tenha sido sua causa');
+    expect(html).toContain('id="value-ledger-section" hidden');
+  });
+
   it('renders the aging and ownerless resources section', () => {
     const html = generateStaticReport({
       ...fullData,

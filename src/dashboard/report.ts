@@ -13,6 +13,7 @@ import type {
   OwnershipReport,
   Recommendation,
   RemediationPlan,
+  SavingsRealization,
   UnitEconomicsReport,
   WafScorecard,
 } from '@/models';
@@ -30,6 +31,7 @@ export type StaticReportData = {
   remediationPlans?: RemediationPlan[];
   waf?: WafScorecard | undefined;
   inaction?: InactionCost | undefined;
+  savingsRealization?: SavingsRealization | undefined;
   decisionEngine?: DecisionEngineReport | undefined;
   aging?: AgingReport | undefined;
   forgottenEnvironments?: ForgottenEnvironmentReport | undefined;
@@ -479,6 +481,69 @@ export const REPORT_CLIENT_SCRIPT = `
           + table;
       }
 
+      function renderSavingsRealization() {
+        const data = REPORT.savingsRealization;
+        if (!data) return;
+        document.getElementById('value-ledger-section').hidden = false;
+        const fmtItem = (value, currency) => {
+          try {
+            return new Intl.NumberFormat('pt-BR', {
+              style: 'currency',
+              currency: currency,
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }).format(value);
+          } catch (err) {
+            return currency + ' ' + Number(value).toLocaleString('pt-BR', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            });
+          }
+        };
+
+        const statusLabels = {
+          verified_reduction: 'Redução observada',
+          no_reduction: 'Sem redução',
+          no_baseline_spend: 'Sem custo-base',
+          awaiting_period: 'Aguardando mês comparável',
+          baseline_unavailable: 'Sem fatura-base',
+          current_cost_unavailable: 'Fatura atual indisponível',
+          currency_mismatch: 'Moeda incompatível',
+        };
+        const rows = data.items.map(function (item) {
+          const before = item.baselineCost == null
+            ? '—'
+            : fmtItem(item.baselineCost, item.currency) + ' (' + esc(item.baselineMonth || '') + ')';
+          const after = item.currentCost == null
+            ? '—'
+            : fmtItem(item.currentCost, item.currency) + ' (' + esc(item.currentMonth || '') + ')';
+          return '<tr>'
+            + '<td><strong>' + esc(item.resourceName) + '</strong><div class="muted">' + esc(item.finding) + '</div></td>'
+            + '<td>' + esc(statusLabels[item.status] || item.status) + '</td>'
+            + '<td>' + before + '</td>'
+            + '<td>' + after + '</td>'
+            + '<td class="' + (item.monthlyReduction > 0 ? 'delta-down' : '') + '">' + fmtItem(item.monthlyReduction, item.currency) + '</td>'
+            + '<td class="muted">' + esc(item.explanation) + '</td>'
+            + '</tr>';
+        }).join('');
+
+        const table = rows
+          ? '<div class="table-scroll"><table><thead><tr><th>Recurso resolvido</th><th>Resultado</th><th>Fatura-base</th><th>Fatura posterior</th><th>Redução/mês</th><th>Leitura</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+          : '<div class="empty">Nenhum recurso foi resolvido desde o relatório anterior.</div>';
+
+        document.getElementById('value-ledger-body').innerHTML =
+          '<div class="inaction-kpis">'
+          + Object.entries(data.verifiedMonthlyReductionByCurrency || {}).map(function (entry) {
+            return '<div class="inaction-kpi"><span>' + fmtItem(entry[1], entry[0]) + '</span><small>redução mensal observada</small></div>';
+          }).join('')
+          + '<div class="inaction-kpi"><span>' + data.verifiedCount + '</span><small>reduções confirmadas por recurso</small></div>'
+          + '<div class="inaction-kpi"><span>' + data.unmeasuredCount + '</span><small>resoluções sem medição conclusiva</small></div>'
+          + '</div>'
+          + '<p class="muted">' + esc(data.summary) + '</p>'
+          + '<p class="muted">Comparação entre meses fechados com buffer de 7 dias para atualização da fatura. A redução observada confirma a variação do custo do recurso, não que a recomendação tenha sido sua causa.</p>'
+          + table;
+      }
+
       /**
        * Renders the audit trail of a finding. Showing the measurements and the price
        * basis is what lets a reader challenge or accept the number.
@@ -775,6 +840,7 @@ export const REPORT_CLIENT_SCRIPT = `
       renderGovernance();
       renderUnitEconomics();
       renderWaf();
+      renderSavingsRealization();
       renderInaction();
       renderDiff();
       renderOwnership();
@@ -819,6 +885,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     diff: data.diff ?? null,
     waf: data.waf ?? null,
     inaction: data.inaction ?? null,
+    savingsRealization: data.savingsRealization ?? null,
     decisionEngine: data.decisionEngine ?? null,
     aging: data.aging ?? null,
     forgottenEnvironments: data.forgottenEnvironments ?? null,
@@ -1273,6 +1340,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="card">
           <p class="section-hint">Recomendações que já constavam no relatório anterior e continuam em aberto, com o valor que já deixou de ser economizado desde a primeira detecção.</p>
           <div id="inaction-body"></div>
+        </div>
+      </section>
+
+      <section id="value-ledger-section" hidden>
+        <h2>FinOps Value Ledger · Economia observada</h2>
+        <div class="card">
+          <p class="section-hint">Acompanha recursos resolvidos e compara o custo faturado por recurso entre meses fechados. O valor só é confirmado quando há redução real na fatura; isso comprova a variação, não a causalidade da ação.</p>
+          <div id="value-ledger-body"></div>
         </div>
       </section>
 

@@ -129,6 +129,8 @@ export const BilledCostSchema = z.object({
   latestMonth: z.string().min(1),
   /** True when the resource was billed earlier in the period but no longer is. */
   billingStopped: z.boolean(),
+  /** Months covered by the query, including months with no charge for this resource. */
+  coveredMonths: z.array(z.string().regex(/^\d{4}-\d{2}$/)).optional(),
 });
 
 export const EvidenceSchema = z.object({
@@ -382,6 +384,37 @@ export const InactionCostSchema = z.object({
   summary: z.string().min(1),
 });
 
+export const SavingsRealizationItemSchema = z.object({
+  resourceId: z.string().min(1),
+  resourceName: z.string().min(1),
+  finding: z.string().min(1),
+  status: z.enum([
+    'verified_reduction',
+    'no_reduction',
+    'no_baseline_spend',
+    'awaiting_period',
+    'baseline_unavailable',
+    'current_cost_unavailable',
+    'currency_mismatch',
+  ]),
+  baselineMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  currentMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  baselineCost: costAmount.optional(),
+  currentCost: costAmount.optional(),
+  monthlyReduction: nonNegativeNumber,
+  currency: z.string().min(1),
+  explanation: z.string().min(1),
+});
+
+export const SavingsRealizationSchema = z.object({
+  comparedTo: z.string().min(1),
+  items: z.array(SavingsRealizationItemSchema),
+  verifiedMonthlyReductionByCurrency: z.record(z.string(), nonNegativeNumber),
+  verifiedCount: z.number().int().min(0),
+  unmeasuredCount: z.number().int().min(0),
+  summary: z.string().min(1),
+});
+
 /**
  * How ready a recommendation is to be executed, so an operator can triage a long
  * list of findings instead of treating every one as equally actionable.
@@ -577,6 +610,8 @@ export type WafCheck = z.infer<typeof WafCheckSchema>;
 export type WafScorecard = z.infer<typeof WafScorecardSchema>;
 export type StaleRecommendation = z.infer<typeof StaleRecommendationSchema>;
 export type InactionCost = z.infer<typeof InactionCostSchema>;
+export type SavingsRealizationItem = z.infer<typeof SavingsRealizationItemSchema>;
+export type SavingsRealization = z.infer<typeof SavingsRealizationSchema>;
 export type DecisionCategory = z.infer<typeof DecisionCategorySchema>;
 export type SavingsStatus = z.infer<typeof SavingsStatusSchema>;
 export type Decision = z.infer<typeof DecisionSchema>;
