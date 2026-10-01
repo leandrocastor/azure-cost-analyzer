@@ -61,15 +61,15 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 
 #### Cloud Shell without storage (ephemeral session)
 
-If you start Cloud Shell with **No storage account required**, `$HOME/clouddrive` is not mounted. Do not use the previous command: it fails with `ENOENT` because its output directory does not exist. Use `--ephemeral` to save the report as `./azure-cost-report.html` in the current directory:
+If you start Cloud Shell with **No storage account required**, `$HOME/clouddrive` is not mounted, so the previous command fails with `ENOENT`. In this case, use the command below: `--output "./azure-cost-report.html"` saves the report in the current directory, which exists even without mounted storage.
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
   --period 3 \
-  --ephemeral
+  --output "./azure-cost-report.html"
 ```
 
-The report, along with the optional remediation script, is written to the Cloud Shell session's temporary filesystem. According to the [official documentation for ephemeral sessions](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), files are deleted when the session ends; download or transfer the report before closing/restarting Cloud Shell if you want to keep it. To persist the file across sessions, use the `$HOME/clouddrive` path from the previous example with storage mounted ([how Cloud Shell storage persists files](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)). To choose another filename or directory, use `--output` instead of `--ephemeral`.
+The report, along with the optional remediation script, is written to the Cloud Shell session's temporary filesystem. According to the [official documentation for ephemeral sessions](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), files are deleted when the session ends; download or transfer the report before closing/restarting Cloud Shell if you want to keep it. To persist the file across sessions, use the `$HOME/clouddrive` path from the previous example with storage mounted ([how Cloud Shell storage persists files](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
 
 #### Cost Management query quota (QPU)
 
@@ -169,7 +169,6 @@ Without `--subscription`, every enabled subscription visible to the authenticate
 | --- | --- |
 | `--period`, `-p` | Trailing months to analyze (1 to 12, default 1) |
 | `--output`, `-o` | Output HTML file path |
-| `--ephemeral` | Save `./azure-cost-report.html` in the current directory for sessions without storage; cannot be combined with `--output` |
 | `--subscription`, `-s` | Restrict the analysis to a single subscription |
 | `--compare`, `-c` | Path to a previous report (HTML or JSON) to diff against |
 | `--owner-tags` | Comma-separated tag keys used to attribute waste to an owner |

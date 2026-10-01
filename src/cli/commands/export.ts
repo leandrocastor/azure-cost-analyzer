@@ -142,10 +142,6 @@ export default class ExportCommand extends Command {
       default: 1,
     }),
     output: Flags.string({ char: 'o', description: 'Output HTML file path' }),
-    ephemeral: Flags.boolean({
-      description: 'Save the report as ./azure-cost-report.html for a no-storage, ephemeral session.',
-      default: false,
-    }),
     compare: Flags.string({
       char: 'c',
       description:
@@ -169,10 +165,6 @@ export default class ExportCommand extends Command {
    */
   public async run(): Promise<void> {
     const { flags } = await this.parse(ExportCommand);
-    if (flags.ephemeral && flags.output) {
-      throw new Error('--ephemeral cannot be combined with --output; choose one output location.');
-    }
-
     const spinner = ora('Discovering accessible Azure subscriptions...').start();
 
     try {
@@ -488,9 +480,7 @@ export default class ExportCommand extends Command {
         anomalies,
       });
 
-      const outputPath = path.resolve(
-        flags.ephemeral ? 'azure-cost-report.html' : (flags.output ?? defaultOutputPath()),
-      );
+      const outputPath = path.resolve(flags.output ?? defaultOutputPath());
       await writeFile(outputPath, html, 'utf8');
 
       let scriptPath: string | undefined;
