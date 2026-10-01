@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { validEnv, mockCostSummary, mockIdleResources, mockRecommendations } from '../fixtures/mock-data';
@@ -285,6 +286,30 @@ describe('CLI command classes', () => {
     const html = readFileSync(reportOutputPath, 'utf8');
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('"subscriptionId":"sub-3"');
+  });
+
+  it('writes an ephemeral report in the current directory without requiring a storage mount', async () => {
+    const originalDirectory = process.cwd();
+    const ephemeralDirectory = mkdtempSync(path.join(tmpdir(), 'azure-cost-analyzer-'));
+
+    try {
+      process.chdir(ephemeralDirectory);
+      await ExportCommand.run(['--ephemeral', '--subscription', 'sub-3']);
+
+      const ephemeralReportPath = path.join(ephemeralDirectory, 'azure-cost-report.html');
+      expect(existsSync(ephemeralReportPath)).toBe(true);
+      expect(readFileSync(ephemeralReportPath, 'utf8')).toContain('<!DOCTYPE html>');
+      expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining(ephemeralReportPath));
+    } finally {
+      process.chdir(originalDirectory);
+      rmSync(ephemeralDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects combining --ephemeral with --output', async () => {
+    await expect(ExportCommand.run(['--ephemeral', '--output', reportOutputPath])).rejects.toThrow(
+      '--ephemeral cannot be combined with --output',
+    );
   });
 
   it('reports export failures through spinner', async () => {

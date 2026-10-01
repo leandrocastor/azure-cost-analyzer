@@ -61,15 +61,15 @@ Se nenhuma assinatura for informada via `--subscription`, o comando `export` des
 
 #### Cloud Shell sem storage (sessão efêmera)
 
-Se você iniciar o Cloud Shell com **No storage account required**, o diretório `$HOME/clouddrive` não estará montado. Nesse caso, use um caminho no diretório atual:
+Se você iniciar o Cloud Shell com **No storage account required**, o diretório `$HOME/clouddrive` não estará montado. Não use o comando anterior: ele falhará com `ENOENT` porque o diretório de saída não existe. Use a opção `--ephemeral`, que salva o relatório como `./azure-cost-report.html` no diretório atual:
 
 ```bash
 npx --yes github:leandrocastor/azure-cost-analyzer export \
   --period 3 \
-  --output "./azure-cost-report.html"
+  --ephemeral
 ```
 
-Esse é o mesmo comando `export`; muda apenas o caminho passado em `--output`. O arquivo é gravado no sistema de arquivos temporário da sessão do Cloud Shell. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), os arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Para persistir o arquivo entre sessões, use o caminho em `$HOME/clouddrive` do exemplo anterior com storage montado ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)).
+O arquivo, assim como o script de remediação opcional, fica no sistema de arquivos temporário da sessão do Cloud Shell. Segundo a [documentação oficial de sessões efêmeras](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started/ephemeral), os arquivos são apagados quando a sessão termina; baixe ou transfira o relatório antes de fechar/reiniciar o Cloud Shell se quiser guardá-lo. Para persistir o arquivo entre sessões, use o caminho em `$HOME/clouddrive` do exemplo anterior com storage montado ([como o storage do Cloud Shell persiste arquivos](https://learn.microsoft.com/en-us/azure/cloud-shell/persisting-shell-storage)). Se quiser escolher outro nome ou diretório, use `--output` em vez de `--ephemeral`.
 
 #### Cota de consultas do Cost Management (QPU)
 
@@ -169,6 +169,7 @@ Sem `--subscription`, todas as assinaturas habilitadas visíveis à identidade a
 | --- | --- |
 | `--period`, `-p` | Meses retroativos a analisar (1 a 12, padrão 1) |
 | `--output`, `-o` | Caminho do arquivo HTML de saída |
+| `--ephemeral` | Salva `./azure-cost-report.html` no diretório atual para sessões sem storage; não pode ser combinado com `--output` |
 | `--subscription`, `-s` | Restringe a análise a uma única assinatura |
 | `--compare`, `-c` | Caminho de um relatório anterior (HTML ou JSON) para gerar o comparativo |
 | `--owner-tags` | Tags usadas para atribuir o desperdício a um responsável, separadas por vírgula |
