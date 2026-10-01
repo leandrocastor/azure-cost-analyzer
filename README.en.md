@@ -185,12 +185,14 @@ High-risk actions require the operator to type `CONFIRMO` before proceeding. Eve
 Keep the generated reports and diff them to see how the environment evolves:
 
 ```bash
-cost-analyzer export --period 1 --output ./report-august.html
+cost-analyzer export --period 3 --output ./report-august.html
 # ... one month later ...
-cost-analyzer export --period 1 --output ./report-september.html --compare ./report-august.html
+cost-analyzer export --period 3 --output ./report-september.html --compare ./report-august.html
 ```
 
 The report then shows the total variation, the largest movements by service and resource group, and which idle resources appeared or were resolved.
+
+It also includes a **FinOps Value Ledger**: for each resolved finding, it compares that resource's billed cost across closed months and reports the observed reduction. A comparison is conclusive only when both reports cover per-resource costs for distinct months; older reports without that evidence are marked unmeasured, never as savings. An observed reduction does not prove the recommendation caused it. The report waits seven days after month-end to allow for billing updates; keep `--period 3` to cover these months. This check queries per-resource Cost Management data only for subscriptions with previously flagged resources that already have cost evidence, and may consume additional QPUs.
 
 #### Waste by owner
 

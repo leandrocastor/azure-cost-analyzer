@@ -69,6 +69,20 @@ describe('CostAnalyzerService', () => {
     expect(usageMock).toHaveBeenCalledTimes(1);
   });
 
+  it('includes zero-charge months in resource ledger coverage', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'ResourceId' }, { name: 'Currency' }],
+      rows: [[25, '2026-02-01', '/subscriptions/sub/disks/disk-a', 'BRL']],
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+
+    const ledger = await service.queryResourceCosts('sub', '2026-01-01', '2026-03-31');
+
+    expect(ledger.months).toEqual(['2026-02']);
+    expect(ledger.coveredMonths).toEqual(['2026-01', '2026-02', '2026-03']);
+    expect(ledger.resources['/subscriptions/sub/disks/disk-a']).toEqual({ '2026-02': 25 });
+  });
+
   it('retrieves costs by period', async () => {
     usageMock.mockResolvedValue({
       columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],

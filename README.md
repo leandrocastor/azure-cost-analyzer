@@ -185,12 +185,14 @@ Ações classificadas como risco alto exigem que o operador digite `CONFIRMO` an
 Guarde os relatórios gerados e compare-os para ver a evolução do ambiente:
 
 ```bash
-cost-analyzer export --period 1 --output ./relatorio-agosto.html
+cost-analyzer export --period 3 --output ./relatorio-agosto.html
 # ... um mês depois ...
-cost-analyzer export --period 1 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
+cost-analyzer export --period 3 --output ./relatorio-setembro.html --compare ./relatorio-agosto.html
 ```
 
 O relatório passa a exibir a variação total, os maiores movimentos por service e por resource group, além dos recursos ociosos que surgiram ou foram resolvidos.
+
+Também é exibido o **FinOps Value Ledger**: para cada achado resolvido, compara o custo faturado do recurso entre meses fechados e mostra a redução observada. O comparativo só é considerado conclusivo quando os dois relatórios têm cobertura de custos por recurso para meses distintos; relatórios antigos sem essa evidência aparecem como não mensurados, nunca como economia. Uma redução observada não prova que a recomendação foi sua causa. O relatório espera sete dias após o fechamento do mês para absorver atualizações da fatura; mantenha `--period 3` para cobrir esses meses. Essa verificação consulta o Cost Management por recurso apenas para assinaturas com achados anteriores que já tenham evidência de custo e pode consumir QPU adicional.
 
 #### Desperdício por responsável
 

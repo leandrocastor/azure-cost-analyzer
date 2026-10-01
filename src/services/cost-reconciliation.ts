@@ -97,7 +97,12 @@ export class CostReconciliationService {
         continue;
       }
 
-      const billed = this.buildBilledCost(monthly, ledger.currency, latestMonth);
+      const billed = this.buildBilledCost(
+        monthly,
+        ledger.currency,
+        latestMonth,
+        ledger.coveredMonths ?? ledger.months,
+      );
       const outcome = this.classify(billed);
 
       if (outcome === 'never-billed') {
@@ -136,6 +141,7 @@ export class CostReconciliationService {
     monthly: Record<string, number>,
     currency: string,
     latestMonth: string,
+    coveredMonths: string[],
   ): BilledCost {
     const observedTotal = Object.values(monthly).reduce((total, value) => total + value, 0);
     const monthsWithCost = Object.entries(monthly)
@@ -153,6 +159,7 @@ export class CostReconciliationService {
       ...(lastMonthWithCost ? { lastMonthWithCost } : {}),
       latestMonth,
       billingStopped: monthsWithCost.length > 0 && latestMonthCost < BILLING_NOISE_THRESHOLD,
+      coveredMonths,
     };
   }
 
