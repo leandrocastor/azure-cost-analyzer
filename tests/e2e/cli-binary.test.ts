@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -15,6 +15,19 @@ const runBinary = (args: string[]): { stdout: string; stderr: string; code: numb
 };
 
 describe.skipIf(!binaryExists)('CLI binary E2E (subprocess)', () => {
+  it('resolves aliases in emitted JavaScript and declarations', () => {
+    const dist = path.resolve(__dirname, '../../dist');
+    const files = readdirSync(dist, { recursive: true })
+      .filter((file): file is string => typeof file === 'string')
+      .filter((file) => file.endsWith('.js') || file.endsWith('.d.ts'));
+    expect(files.some((file) => file.endsWith('.js'))).toBe(true);
+    expect(files.some((file) => file.endsWith('.d.ts'))).toBe(true);
+    for (const file of files) {
+      expect(readFileSync(path.join(dist, file), 'utf8'), file)
+        .not.toMatch(/(?:from\s*|require\(\s*)['"]@\//);
+    }
+  });
+
   it('exits with code 0 for --help', () => {
     const { code, stdout } = runBinary(['--help']);
     expect(code).toBe(0);

@@ -14,6 +14,10 @@
       "@/cli/*": ["src/cli/*"],
       "@/dashboard/*": ["src/dashboard/*"]
     },
+    "plugins": [
+      { "transform": "typescript-transform-paths" },
+      { "transform": "typescript-transform-paths", "afterDeclarations": true }
+    ],
     "strict": true,
     "noImplicitOverride": true,
     "noUncheckedIndexedAccess": true,
