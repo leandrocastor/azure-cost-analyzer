@@ -3,6 +3,7 @@ import type { CostDiff } from '@/models';
 import { ExecutiveSummaryService } from '@/services/executive-summary';
 import { OwnershipService } from '@/services/ownership';
 import { RemediationService } from '@/services/remediation';
+import { CashCaptureService } from '@/services/cash-capture';
 import { REPORT_CLIENT_SCRIPT, generateStaticReport } from '@/dashboard/report';
 import { mockCostSummary, mockIdleResources, mockRecommendations } from '../fixtures/mock-data';
 
@@ -71,6 +72,36 @@ describe('generateStaticReport', () => {
     expect(html).toContain('const esc = (value)');
     expect(html).toContain('esc(res.name');
     expect(html).toContain('esc(r.title');
+  });
+
+  it('executes the cash-capture renderer with escaped evidence and per-currency amounts', () => {
+    const plan = new CashCaptureService().build(
+      mockRecommendations, mockIdleResources, baseData.generatedAt, 'BRL',
+    );
+    plan.items[0]!.resourceName = '<img src=x onerror=alert(1)>';
+    plan.items[0]!.status = 'conditional';
+    plan.items[0]!.conditionalMonthlySavings = 80;
+    plan.conditionalEstimateByCurrency = { BRL: 80, USD: 20 };
+    const html = generateStaticReport({ ...baseData, cashCapture: plan });
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    expect(embedded).not.toBeNull();
+    type ElementStub = { textContent: string; innerHTML: string; hidden: boolean; value: string };
+    const elements = new Map<string, ElementStub>();
+    const getElementById = (id: string): ElementStub => {
+      if (!elements.has(id)) elements.set(id, {
+        textContent: id === 'report-data' ? embedded![1]! : '',
+        innerHTML: '', hidden: true, value: id === 'idle-sort' ? 'idleScore-desc' : '',
+      });
+      return elements.get(id)!;
+    };
+    new Script(REPORT_CLIENT_SCRIPT).runInNewContext({ document: { getElementById }, Intl });
+    const rendered = getElementById('cash-capture-body').innerHTML;
+    expect(getElementById('cash-capture-section').hidden).toBe(false);
+    expect(rendered).toContain('BRL 80,00');
+    expect(rendered).toContain('USD 20,00');
+    expect(rendered).toContain('Nenhum valor aqui é caixa confirmado');
+    expect(rendered).toContain('&lt;img');
+    expect(rendered).not.toContain('<img');
   });
 });
 

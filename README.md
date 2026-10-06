@@ -313,12 +313,36 @@ Nem toda recomendação técnica pode ser executada sem revisão, e nem toda eco
 
 | Categoria | Significado |
 | --- | --- |
-| Executável agora | Risco baixo e economia confirmada pela fatura, ou achado de configuração com alta confiança, risco e esforço baixos |
+| Executável agora | Triagem técnica de risco baixo com estimativa respaldada por custo observado, ou achado de configuração com alta confiança; ainda exige validação de contratos, dependências e aprovação |
 | Validar antes | Risco alto, ou a ação depende de confirmação do time responsável pelo recurso |
 | Investigar | Confiança baixa ou base heurística — a evidência não é suficiente para decidir sozinho |
 | Somente histórico | O recurso já parou de gerar custo; não há economia futura a capturar, apenas o registro do que já foi desperdiçado |
 
-A economia total também é dividida por status de confiabilidade — **confirmada** (bate com a fatura), **provável** (achado de configuração de alta confiança) e **não confirmada** (estimativa sem respaldo na fatura) — em vez de somar tudo em um único número otimista.
+A economia total também é dividida por status de confiabilidade — **respaldada por custo observado**, **provável** (preço de lista) e **não confirmada** (estimativa sem respaldo na fatura). Por compatibilidade, o JSON mantém o status `confirmada`; ele não comprova redução futura de pagamento.
+
+#### Plano de Captura de Caixa — economia sem ilusões
+
+O relatório agora separa a **estimativa bruta** do **teto condicional sem sobreposições** e mostra por que uma ação pode não reduzir o pagamento. Não é necessário mudar o comando:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "./azure-cost-report.html"
+```
+
+| Situação | Entrega |
+| --- | --- |
+| Dois aplicativos e seu App Service Plan recomendados para otimização | Usa o `serverFarmId` retornado pelo Azure para identificar a cobrança compartilhada; retém apenas uma alternativa no total |
+| VM desalocada com discos cobrados | Consulta o custo dos IDs dos discos vinculados, não o custo histórico de computação da VM |
+| Banco SQL com pool identificado | Usa o `elasticPoolId`; sem relação confirmada, não supõe que reduzir um banco libera a reserva compartilhada |
+| Migração ou mudança de camada | Exige verificar custo no destino, transações, recuperação, exclusão antecipada e cobranças residuais antes de declarar benefício líquido |
+| Reserva ou Savings Plan | Expõe a validação contratual necessária; não presume que reduzir consumo reduz um compromisso que continua sendo pago |
+
+Cada ação inclui unidades de cobrança, recomendações sobrepostas, bloqueios, condições para capturar a oportunidade e critérios para verificar o resultado. O relatório agrupa sobreposições **transitivamente**, retendo a maior alternativa respaldada por custo em cada grupo; não soma ações sobre a mesma capacidade. Essa seleção é conservadora, não um otimizador de portfólio.
+
+O valor retido é limitado ao custo das unidades de cobrança no último mês fechado com uma janela de sete dias para atualizações. Os sete dias não garantem fatura finalizada. Cobertura insuficiente, custo ausente, créditos negativos, modelo não suportado e moedas divergentes na mesma unidade ficam **não quantificados**. Moedas distintas são apresentadas separadamente.
+
+**Limites desta primeira etapa:** não consulta cobertura/utilização/vencimento de reservas ou Savings Plans, não precifica automaticamente capacidade de destino e não mede custos de execução. Portanto, não quantifica caixa confirmado nem capacidade contratada liberada, e não escolhe um plano para atingir uma meta financeira. O dashboard ao vivo mostra condições e lacunas; a conciliação com mês fechado usa o relatório exportado. O `--compare` também evita somar duas vezes reduções observadas nas mesmas unidades de cobrança; sua medição continua sendo uma variação de custo, não prova causal ou benefício líquido de migração.
 
 #### Recursos Envelhecidos e Sem Dono
 

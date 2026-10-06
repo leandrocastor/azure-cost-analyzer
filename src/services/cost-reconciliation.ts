@@ -90,7 +90,17 @@ export class CostReconciliationService {
     const stopped: ReconciliationResult['stopped'] = [];
 
     for (const idle of idleResources) {
-      const monthly = ledger.resources[idle.resource.id.toLowerCase()];
+      const billingIds = [...new Set(
+        (idle.resource.billingResourceIds ?? [idle.resource.id]).map((id) => id.toLowerCase()),
+      )];
+      const billingMonths = billingIds.map((id) => ledger.resources[id]);
+      const monthly: Record<string, number> | undefined =
+        billingMonths.length > 0 && billingMonths.every((months) => months !== undefined)
+          ? Object.fromEntries(ledger.months.map((month) => [
+              month,
+              billingMonths.reduce((sum, months) => sum + (months?.[month] ?? 0), 0),
+            ]))
+          : undefined;
 
       if (!monthly) {
         kept.push(this.markUnverified(idle));

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
 import { OptimizerService } from '@/services/optimizer';
 import { ResourceDetectorService } from '@/services/resource-detector';
+import { CashCaptureService } from '@/services/cash-capture';
 
 const costsQuerySchema = z.object({
   period: z.coerce.number().int().min(1).max(12).default(3),
@@ -86,6 +87,9 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
         idleResourceCount: idleResources.length,
         recommendationCount: recommendations.length,
         annualSavingsOpportunity: recommendations.reduce((sum, item) => sum + item.annualSavings, 0),
+        cashCapture: new CashCaptureService().build(
+          recommendations, idleResources, new Date().toISOString(), costs.currency,
+        ),
       });
     } catch (error: unknown) {
       next(error);

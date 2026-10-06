@@ -184,4 +184,34 @@ describe('SavingsRealizationService', () => {
     expect(result.items[0]?.status).toBe('current_cost_unavailable');
     expect(result.unmeasuredCount).toBe(1);
   });
+
+  it('measures shared billing units once instead of reporting a zero site meter as full savings', () => {
+    const planId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/serverFarms/plan';
+    const a = previousFinding({
+      resource: { ...previousFinding().resource, id: '/subscriptions/sub/sites/a', billingResourceIds: [planId] },
+    });
+    const b = previousFinding({
+      resource: { ...previousFinding().resource, id: '/subscriptions/sub/sites/b', billingResourceIds: [planId.toUpperCase()] },
+    });
+    const result = service.analyze(
+      { ...previousSnapshot(), idleResources: [a, b] }, [], currentGeneratedAt,
+      new Map([['sub', { ...ledger({}), resources: { [planId.toLowerCase()]: { '2026-07': 20 } } }]]),
+    );
+    expect(result.verifiedMonthlyReductionByCurrency).toEqual({ BRL: 80 });
+    expect(result.verifiedCount).toBe(1);
+    expect(result.items.map((item) => item.status)).toContain('overlapping_billing_unit');
+    expect(result.items.every((item) => item.currentCost === 20)).toBe(true);
+  });
+
+  it('does not offset negative disk adjustments with positive disk charges to manufacture a reduction', () => {
+    const finding = previousFinding({
+      resource: { ...previousFinding().resource, billingResourceIds: ['disk-a', 'disk-b'] },
+    });
+    const result = service.analyze(
+      previousSnapshot(finding), [], currentGeneratedAt,
+      new Map([['sub', { ...ledger({}), resources: { 'disk-a': { '2026-07': -20 }, 'disk-b': { '2026-07': 40 } } }]]),
+    );
+    expect(result.verifiedMonthlyReductionByCurrency).toEqual({});
+    expect(result.items[0]?.status).toBe('no_reduction');
+  });
 });

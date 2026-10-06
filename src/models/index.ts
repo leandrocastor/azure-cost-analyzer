@@ -70,6 +70,8 @@ export const ResourceSchema = z.object({
   sku: z.string().min(1),
   tags: tagsSchema,
   status: z.string().min(1),
+  /** ARM IDs of the actual billing units, when explicitly returned by Azure. */
+  billingResourceIds: z.array(z.string().min(1)).min(1).optional(),
 });
 
 export const ResourceMetricSchema = z.object({
@@ -204,6 +206,30 @@ export const RecommendationSchema = z.object({
    * costs more credibility than the money it claims to save.
    */
   billingRationale: BillingRationaleSchema.optional(),
+});
+
+export const CashCaptureItemSchema = z.object({
+  recommendationId: z.string().min(1),
+  resourceId: z.string().min(1),
+  resourceName: z.string().min(1),
+  currency: z.string().min(1),
+  billingResourceIds: z.array(z.string()),
+  estimatedMonthlySavings: nonNegativeNumber,
+  conditionalMonthlySavings: nonNegativeNumber,
+  status: z.enum(['conditional', 'overlap', 'unquantified', 'historical']),
+  overlapsWith: z.array(z.string()),
+  blockers: z.array(z.string()),
+  captureConditions: z.array(z.string()),
+  verificationCriteria: z.array(z.string()),
+});
+
+export const CashCapturePlanSchema = z.object({
+  baselineMonth: z.string().optional(),
+  items: z.array(CashCaptureItemSchema),
+  grossEstimateByCurrency: z.record(z.string(), nonNegativeNumber),
+  conditionalEstimateByCurrency: z.record(z.string(), nonNegativeNumber),
+  overlapExcludedByCurrency: z.record(z.string(), nonNegativeNumber),
+  limitations: z.array(z.string()),
 });
 
 /**
@@ -396,6 +422,7 @@ export const SavingsRealizationItemSchema = z.object({
     'baseline_unavailable',
     'current_cost_unavailable',
     'currency_mismatch',
+    'overlapping_billing_unit',
   ]),
   baselineMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
   currentMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
@@ -419,8 +446,8 @@ export const SavingsRealizationSchema = z.object({
  * How ready a recommendation is to be executed, so an operator can triage a long
  * list of findings instead of treating every one as equally actionable.
  *
- * - `EXECUTAVEL_AGORA`: strong evidence and low risk; safe to run through the
- *   generated remediation plan without further validation.
+ * - `EXECUTAVEL_AGORA`: strong evidence and low technical risk; contracts,
+ *   dependencies and approval still require validation before remediation.
  * - `VALIDAR_ANTES`: the saving is real or likely, but risk, effort or partial
  *   confidence warrant a manual check before acting.
  * - `SOMENTE_HISTORICO`: the cost this finding once represented has already
@@ -598,6 +625,8 @@ export type BillingRationale = z.infer<typeof BillingRationaleSchema>;
 export type Evidence = z.infer<typeof EvidenceSchema>;
 export type IdleResource = z.infer<typeof IdleResourceSchema>;
 export type Recommendation = z.infer<typeof RecommendationSchema>;
+export type CashCaptureItem = z.infer<typeof CashCaptureItemSchema>;
+export type CashCapturePlan = z.infer<typeof CashCapturePlanSchema>;
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 export type RemediationStep = z.infer<typeof RemediationStepSchema>;
 export type RemediationPlan = z.infer<typeof RemediationPlanSchema>;

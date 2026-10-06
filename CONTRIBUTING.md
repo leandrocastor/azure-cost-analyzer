@@ -7,6 +7,11 @@
 3. Copy `.env.example` to `.env` and configure Azure access.
 4. Run `npm run lint`, `npm run test`, and `npm run build` before opening a pull request.
 
+The build uses the live `ts-patch` compiler (`tspc`) with `typescript-transform-paths`
+to resolve `@/` aliases in JavaScript and declaration files during emission.
+Use `npm run build`, not plain `tsc`, to produce runnable artifacts. Keep both
+transformer entries in `tsconfig.json`; `npm run typecheck` remains a no-emit check.
+
 ## Testing requirements
 
 - Keep all tests self-contained and mock every Azure SDK call.

@@ -2,29 +2,14 @@ import type { SavingsRealization, SavingsRealizationItem, IdleResource } from '@
 import { SavingsRealizationSchema } from '@/models';
 import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import type { ReportSnapshot } from '@/services/cost-diff';
+import { latestSettledMonth } from '@/utils/billing-period';
+import { groupByBillingUnits } from '@/utils/billing-units';
 
 const round = (value: number): number => Number(value.toFixed(2));
 const RESOURCE_SUBSCRIPTION_PATTERN = /\/subscriptions\/([^/]+)/i;
 
 const subscriptionIdFromResourceId = (resourceId: string): string | undefined =>
   RESOURCE_SUBSCRIPTION_PATTERN.exec(resourceId)?.[1]?.toLowerCase();
-
-/**
- * Returns the latest month that has had seven days to receive billing updates.
- * Comparing this month avoids treating a newly closed, still-changing invoice
- * period as realized savings.
- */
-const latestSettledMonth = (generatedAt: string): string | undefined => {
-  const generated = new Date(generatedAt);
-  if (Number.isNaN(generated.getTime())) {
-    return undefined;
-  }
-
-  const settledThrough = new Date(generated.getTime() - 7 * 24 * 60 * 60 * 1000);
-  settledThrough.setUTCDate(1);
-  settledThrough.setUTCMonth(settledThrough.getUTCMonth() - 1);
-  return settledThrough.toISOString().slice(0, 7);
-};
 
 /**
  * Measures invoice reductions for previously reported findings that are no
@@ -48,6 +33,22 @@ export class SavingsRealizationService {
     const items = candidates.map((item) =>
       this.measure(item, baselineMonth, currentMonth, currentLedgers),
     );
+    const unitsById = new Map(candidates.map((item) => [
+      item.resource.id,
+      item.resource.billingResourceIds ?? [item.resource.id],
+    ]));
+    for (const group of groupByBillingUnits(items, (item) => unitsById.get(item.resourceId) ?? [])) {
+      const measured = group.filter((item) => item.status === 'verified_reduction')
+        .sort((a, b) => b.monthlyReduction - a.monthlyReduction || a.resourceId.localeCompare(b.resourceId));
+      const mixedCurrency = new Set(group.map((item) => item.currency)).size > 1;
+      for (const item of measured) {
+        if (mixedCurrency || item !== measured[0]) {
+          item.status = 'overlapping_billing_unit';
+          item.monthlyReduction = 0;
+          item.explanation = 'Unidade de cobrança compartilhada: redução excluída da soma para evitar dupla contagem ou mistura de moedas.';
+        }
+      }
+    }
     const verified = items.filter((item) => item.status === 'verified_reduction');
     const verifiedMonthlyReductionByCurrency: Record<string, number> = {};
     for (const item of verified) {
@@ -151,7 +152,12 @@ export class SavingsRealizationService {
     }
 
     const baselineCost = previousBilled.monthly[baselineMonth] ?? 0;
-    const currentCost = ledger.resources[idle.resource.id.toLowerCase()]?.[currentMonth] ?? 0;
+    const billingIds = [...new Set(
+      (idle.resource.billingResourceIds ?? [idle.resource.id]).map((id) => id.toLowerCase()),
+    )];
+    const currentCosts = billingIds.map((id) => ledger.resources[id]?.[currentMonth] ?? 0);
+    const currentCost = currentCosts.reduce((sum, cost) => sum + cost, 0);
+    const hasAdjustments = currentCosts.some((cost) => cost < 0);
 
     if (baselineCost <= 0) {
       return {
@@ -165,7 +171,7 @@ export class SavingsRealizationService {
       };
     }
 
-    const monthlyReduction = currentCost < 0 ? 0 : round(Math.max(0, baselineCost - currentCost));
+    const monthlyReduction = hasAdjustments ? 0 : round(Math.max(0, baselineCost - currentCost));
     const status = monthlyReduction > 0 ? 'verified_reduction' : 'no_reduction';
 
     return {
@@ -179,7 +185,7 @@ export class SavingsRealizationService {
       explanation:
         status === 'verified_reduction'
           ? 'Redução observada no custo faturado deste recurso entre meses fechados; a comparação não atribui causalidade à ação.'
-          : currentCost < 0
+          : hasAdjustments
             ? 'O custo atual contém créditos ou ajustes negativos; não é seguro atribuir uma redução realizada.'
             : 'A cobrança não diminuiu entre os meses comparados; não há economia realizada a reportar.',
     };

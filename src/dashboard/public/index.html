@@ -121,9 +121,14 @@
         <div class="kpi-card savings">
           <div class="label">Annual Savings Opportunity</div>
           <div class="value" id="kpi-savings"><div class="skeleton"></div></div>
-          <div class="sub" id="kpi-savings-sub">Potential savings if all recommendations applied</div>
+          <div class="sub" id="kpi-savings-sub">Gross estimate; may overlap and is not confirmed cash savings</div>
         </div>
       </div>
+
+      <section>
+        <h2>Cash Capture Plan</h2>
+        <div class="card" id="cash-capture-body" style="padding:1.25rem"></div>
+      </section>
 
       <section>
         <h2>Idle Resources</h2>
@@ -312,7 +317,27 @@
           renderKPI('kpi-cost', fmt(summary.totalCost), 'Month-to-date');
           renderKPI('kpi-idle', String(summary.idleResourceCount), 'Resources with low utilization');
           renderKPI('kpi-recs', String(summary.recommendationCount), 'Optimization opportunities');
-          renderKPI('kpi-savings', fmt(summary.annualSavingsOpportunity), 'Potential savings if all recommendations applied');
+          renderKPI('kpi-savings', fmt(summary.annualSavingsOpportunity), 'Gross estimate; may overlap and is not confirmed cash savings');
+          const capture = summary.cashCapture;
+          const captureBody = document.getElementById('cash-capture-body');
+          captureBody.replaceChildren();
+          const notice = document.createElement('p');
+          notice.textContent = 'Payment reduction is not confirmed. Export a report to reconcile closed-month billing and inspect overlapping billing units.';
+          captureBody.append(notice);
+          if (capture) {
+            for (const item of capture.items) {
+              const details = document.createElement('details');
+              const title = document.createElement('summary');
+              title.textContent = item.resourceName + ' — ' + item.status;
+              details.append(title);
+              for (const text of [...item.blockers, ...item.captureConditions, ...item.verificationCriteria]) {
+                const paragraph = document.createElement('p');
+                paragraph.textContent = text;
+                details.append(paragraph);
+              }
+              captureBody.append(details);
+            }
+          }
 
           idleData = idle;
           recsData = recs;

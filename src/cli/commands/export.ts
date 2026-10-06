@@ -11,6 +11,7 @@ import { AzureClientService, type AccessibleSubscription } from '@/services/azur
 import { CostAnalyzerService } from '@/services/cost-analyzer';
 import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
+import { CashCaptureService } from '@/services/cash-capture';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { SavingsRealizationService } from '@/services/savings-realization';
@@ -447,6 +448,9 @@ export default class ExportCommand extends Command {
         : new RemediationService().buildPlans(recommendations, idleResources);
 
       const decisionEngine = new DecisionEngineService().evaluate(recommendations, idleResources, costs.currency);
+      const cashCapture = new CashCaptureService().build(
+        recommendations, idleResources, generatedAt, costs.currency, resourceLedgersBySubscription,
+      );
 
       const executiveSummary = new ExecutiveSummaryService().build({
         costs,
@@ -472,6 +476,7 @@ export default class ExportCommand extends Command {
         inaction,
         savingsRealization,
         decisionEngine,
+        cashCapture,
         aging,
         forgottenEnvironments,
         governance,

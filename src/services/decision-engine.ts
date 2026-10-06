@@ -102,7 +102,7 @@ export class DecisionEngineService {
         category: 'EXECUTAVEL_AGORA',
         savingsStatus,
         monthlySavings: round(recommendation.monthlySavings),
-        reasoning: 'Economia confirmada pela fatura, alta confiança na evidência e risco baixo: pode ser executada pelo plano de remediação sem validação adicional.',
+        reasoning: 'Estimativa respaldada por custo observado e risco baixo. Valide contratos, dependências e aprovação no Plano de Captura de Caixa; a fatura não confirma redução futura de pagamento.',
       };
     }
 
@@ -117,7 +117,7 @@ export class DecisionEngineService {
         category: 'EXECUTAVEL_AGORA',
         savingsStatus,
         monthlySavings: round(recommendation.monthlySavings),
-        reasoning: 'Achado de configuração (não depende de uso) com alta confiança, risco e esforço baixos: seguro para execução direta.',
+        reasoning: 'Achado de configuração com alta confiança, risco e esforço baixos. Confirme dependências, retenção e aprovação antes de executar.',
       };
     }
 
@@ -162,7 +162,7 @@ export class DecisionEngineService {
       `${countBy('VALIDAR_ANTES')} exigem validação antes de agir, ` +
       `${countBy('SOMENTE_HISTORICO')} são apenas registro histórico e ` +
       `${countBy('INVESTIGAR')} precisam de mais evidência. ` +
-      `Economia mensal confirmada pela fatura: ${money(totals.confirmed, currency)}; provável (preço de lista): ${money(totals.probable, currency)}; não confirmada: ${money(totals.unconfirmed, currency)}.`
+      `Estimativa mensal respaldada por custo observado: ${money(totals.confirmed, currency)}; provável (preço de lista): ${money(totals.probable, currency)}; não confirmada: ${money(totals.unconfirmed, currency)}. Nenhuma destas estimativas comprova redução futura do pagamento.`
     );
   }
 }
