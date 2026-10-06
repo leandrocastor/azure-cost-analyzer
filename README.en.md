@@ -313,12 +313,36 @@ Not every technical recommendation can be executed without review, and not every
 
 | Category | Meaning |
 | --- | --- |
-| Executable now | Low risk with savings confirmed by the invoice, or a high-confidence configuration finding with low risk and effort |
+| Executable now | Low-risk technical triage with a cost-backed estimate or a high-confidence configuration finding; still requires contract, dependency and approval validation |
 | Validate first | High risk, or the action depends on confirmation from the team owning the resource |
 | Investigate | Low confidence or heuristic basis — the evidence is not strong enough to decide alone |
 | Historical only | The resource has already stopped incurring cost; there is no future saving to capture, only the record of past waste |
 
-Total savings are also split by confidence status — **confirmed** (matches the invoice), **probable** (high-confidence configuration finding), and **unconfirmed** (estimate with no invoice backing) — instead of being rolled up into a single optimistic figure.
+Estimates are split into **backed by observed cost**, **probable** (list price), and **unconfirmed** (no invoice backing). For compatibility the JSON retains `confirmada`; it does not confirm future payment reduction.
+
+#### Cash Capture Plan — savings without illusions
+
+The report separates the **gross estimate** from a **conditional ceiling without overlaps**, explaining why a change might not reduce payment. No new command is needed:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 3 \
+  --output "./azure-cost-report.html"
+```
+
+| Situation | Result |
+| --- | --- |
+| Two sites and their App Service Plan all recommended for optimization | Uses Azure's `serverFarmId` to identify shared billing; retains only one alternative in the total |
+| Deallocated VM with billed disks | Looks up linked disk IDs, not the VM's historical compute cost |
+| SQL database with an identified pool | Uses `elasticPoolId`; without a confirmed relationship it does not assume shrinking a database releases shared capacity |
+| Migration or access-tier change | Requires checking destination costs, transactions, retrieval, early deletion and residual charges before claiming net benefit |
+| Reservation or Savings Plan | Exposes the required contract validation; does not assume lower consumption reduces a continuing commitment |
+
+Each action includes billing units, overlapping recommendations, blockers, capture conditions and verification criteria. Overlaps are grouped **transitively**, keeping the largest cost-backed alternative in each group instead of summing actions on the same capacity. This is conservative selection, not portfolio optimization.
+
+The retained amount is capped at billing-unit cost for the latest closed month with a seven-day update buffer. That buffer does not guarantee a finalized invoice. Incomplete coverage, missing costs, negative adjustments, unsupported models and conflicting currencies on shared units remain **unquantified**. Different currencies are displayed separately.
+
+**First-stage limits:** reservation/Savings Plan coverage, utilization and expiry are not queried; destination capacity and execution costs are not automatically priced. The plan therefore does not quantify confirmed cash reduction or released contracted capacity, and does not select actions to achieve a financial target. The live dashboard exposes conditions and gaps; closed-month reconciliation uses the exported report. `--compare` also avoids counting observed reductions on shared billing units twice; its measurement remains a cost variation, not causal proof or net migration benefit.
 
 #### Aging & Ownerless Resources
 

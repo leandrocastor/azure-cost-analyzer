@@ -1,5 +1,6 @@
 import type {
   AgingReport,
+  CashCapturePlan,
   CostAnomaly,
   CostDiff,
   CostSummary,
@@ -17,6 +18,7 @@ import type {
   UnitEconomicsReport,
   WafScorecard,
 } from '@/models';
+import { CashCaptureService } from '@/services/cash-capture';
 
 export type StaticReportData = {
   generatedAt: string;
@@ -33,6 +35,7 @@ export type StaticReportData = {
   inaction?: InactionCost | undefined;
   savingsRealization?: SavingsRealization | undefined;
   decisionEngine?: DecisionEngineReport | undefined;
+  cashCapture?: CashCapturePlan;
   aging?: AgingReport | undefined;
   forgottenEnvironments?: ForgottenEnvironmentReport | undefined;
   governance?: GovernanceReport | undefined;
@@ -238,10 +241,50 @@ export const REPORT_CLIENT_SCRIPT = `
       };
 
       const SAVINGS_STATUS_LABELS = {
-        confirmada: 'Confirmada pela fatura',
+        confirmada: 'Estimativa respaldada por custo observado',
         provavel: 'Provável (preço de lista)',
         'nao-confirmada': 'Não confirmada',
       };
+
+      function renderCashCapture() {
+        const data = REPORT.cashCapture;
+        if (!data || !data.items.length) return;
+        document.getElementById('cash-capture-section').hidden = false;
+        const labels = {
+          conditional: 'Condicional — validar antes',
+          overlap: 'Sobreposição — fora da soma',
+          unquantified: 'Não quantificada',
+          historical: 'Cobrança já cessou',
+        };
+        function totals(values) {
+          return Object.entries(values).map(function (entry) {
+            return esc(entry[0]) + ' ' + Number(entry[1]).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          }).join(' · ') || 'Sem valor quantificado';
+        }
+        const rows = data.items.map(function (item) {
+          return '<tr><td><strong>' + esc(item.resourceName) + '</strong>'
+            + '<details><summary>Condições e prova de resultado</summary>'
+            + '<p>Unidades de cobrança: ' + esc(item.billingResourceIds.join(', ') || 'não confirmadas') + '</p>'
+            + '<p>Estimativa original: ' + esc(item.currency) + ' ' + item.estimatedMonthlySavings + '/mês</p>'
+            + '<p>Alternativas sobrepostas: ' + esc(item.overlapsWith.join(', ') || 'nenhuma identificada') + '</p>'
+            + item.blockers.map(function (text) { return '<p><strong>Bloqueio:</strong> ' + esc(text) + '</p>'; }).join('')
+            + item.captureConditions.map(function (text) { return '<p>' + esc(text) + '</p>'; }).join('')
+            + '<strong>Prova de resultado</strong>'
+            + item.verificationCriteria.map(function (text) { return '<p>' + esc(text) + '</p>'; }).join('')
+            + '</details></td><td>' + esc(labels[item.status]) + '</td>'
+            + '<td>' + (item.status === 'conditional'
+              ? esc(item.currency) + ' ' + item.conditionalMonthlySavings + '/mês'
+              : 'Não incluída') + '</td></tr>';
+        }).join('');
+        document.getElementById('cash-capture-body').innerHTML =
+          '<p><strong>Estimativa bruta/mês:</strong> ' + totals(data.grossEstimateByCurrency) + '</p>'
+          + '<p><strong>Retida sem sobreposição/mês (condicional):</strong> ' + totals(data.conditionalEstimateByCurrency) + '</p>'
+          + '<p><strong>Sobreposições excluídas/mês:</strong> ' + totals(data.overlapExcludedByCurrency) + '</p>'
+          + '<p class="muted">Mês-base: ' + esc(data.baselineMonth || 'indisponível') + '. Nenhum valor aqui é caixa confirmado.</p>'
+          + data.limitations.map(function (text) { return '<p class="muted">' + esc(text) + '</p>'; }).join('')
+          + '<div class="table-scroll"><table><thead><tr><th>Decisão e evidência</th><th>Status financeiro</th><th>Estimativa retida</th></tr></thead><tbody>'
+          + rows + '</tbody></table></div>';
+      }
 
       function renderDecisionEngine() {
         const data = REPORT.decisionEngine;
@@ -262,7 +305,7 @@ export const REPORT_CLIENT_SCRIPT = `
         document.getElementById('decision-body').innerHTML =
           '<div class="inaction-kpis">'
           + '<div class="inaction-kpi"><span>' + data.executableNowCount + '</span><small>prontas para executar agora</small></div>'
-          + '<div class="inaction-kpi"><span>' + fmtFull(data.confirmedMonthlySavings) + '</span><small>confirmada pela fatura / mês</small></div>'
+          + '<div class="inaction-kpi"><span>' + fmtFull(data.confirmedMonthlySavings) + '</span><small>estimativa respaldada por custo / mês</small></div>'
           + '<div class="inaction-kpi"><span>' + fmtFull(data.probableMonthlySavings) + '</span><small>provável (preço de lista) / mês</small></div>'
           + '<div class="inaction-kpi"><span>' + fmtFull(data.unconfirmedMonthlySavings) + '</span><small>não confirmada / mês</small></div>'
           + '</div>'
@@ -509,6 +552,7 @@ export const REPORT_CLIENT_SCRIPT = `
           baseline_unavailable: 'Sem fatura-base',
           current_cost_unavailable: 'Fatura atual indisponível',
           currency_mismatch: 'Moeda incompatível',
+          overlapping_billing_unit: 'Unidade compartilhada — fora da soma',
         };
         const rows = data.items.map(function (item) {
           const before = item.baselineCost == null
@@ -832,6 +876,7 @@ export const REPORT_CLIENT_SCRIPT = `
       renderKPI('kpi-savings', fmt(REPORT.summary.annualSavingsOpportunity));
 
       renderExecutiveSummary();
+      renderCashCapture();
       renderDecisionEngine();
       renderAging();
       renderForgottenEnvironments();
@@ -887,6 +932,9 @@ export const generateStaticReport = (data: StaticReportData): string => {
     inaction: data.inaction ?? null,
     savingsRealization: data.savingsRealization ?? null,
     decisionEngine: data.decisionEngine ?? null,
+    cashCapture: data.cashCapture ?? new CashCaptureService().build(
+      data.recommendations, data.idleResources, data.generatedAt, data.costs.currency,
+    ),
     aging: data.aging ?? null,
     forgottenEnvironments: data.forgottenEnvironments ?? null,
     governance: data.governance ?? null,
@@ -1251,9 +1299,17 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="kpi-card savings">
           <div class="label">Economia Anual Potencial</div>
           <div class="value" id="kpi-savings"></div>
-          <div class="sub">Economia estimada se todas as recomendações forem aplicadas</div>
+          <div class="sub">Estimativa bruta; pode conter sobreposições e não representa caixa confirmado</div>
         </div>
       </div>
+
+      <section id="cash-capture-section" hidden>
+        <h2>Plano de Captura de Caixa · Economia sem ilusões</h2>
+        <div class="card">
+          <p class="section-hint">Antes de somar economias, identifique a unidade que cobra, as alternativas sobrepostas e o que precisa mudar para reduzir o pagamento. Não é autorização para executar mudanças.</p>
+          <div id="cash-capture-body"></div>
+        </div>
+      </section>
 
       <section id="decision-section" hidden>
         <h2>FinOps Decision Engine</h2>

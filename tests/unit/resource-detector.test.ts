@@ -137,6 +137,20 @@ describe('ResourceDetectorService', () => {
     );
   });
 
+  it.each([false, true])('preserves shared App Service billing IDs from nested or flattened ARM properties (%s)', async (nested) => {
+    const planId = '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/serverFarms/plan';
+    const properties = { serverFarmId: planId };
+    webAppsListMock.mockReturnValue(iterable([{
+      id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Web/sites/app-a',
+      name: 'app-a', location: 'eastus', sku: { tier: 'Standard' },
+      ...(nested ? { properties } : properties),
+    }]));
+    metricsListMock.mockResolvedValue(series('Requests', 50, 'total'));
+    const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
+    expect((await service.detectIdleAppServices())[0]?.resource.billingResourceIds).toEqual([planId]);
+    expect(service.getInventory()[0]?.billingResourceIds).toEqual([planId]);
+  });
+
   it('detects idle storage accounts', async () => {
     storageListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Storage/storageAccounts/store-a', name: 'store-a', location: 'eastus' }]));
     metricsListMock.mockResolvedValue(series('Transactions', 0, 'total'));
@@ -154,6 +168,19 @@ describe('ResourceDetectorService', () => {
     expect(items).toHaveLength(1);
   });
 
+  it('preserves the SQL elastic pool billing ID returned by Azure', async () => {
+    const poolId = '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a/elasticPools/pool';
+    sqlServersListMock.mockReturnValue(iterable([{
+      id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a', name: 'sql-a',
+    }]));
+    sqlDatabasesListByServerMock.mockReturnValue(iterable([{
+      id: '/subscriptions/sub/resourceGroups/rg-sql/providers/Microsoft.Sql/servers/sql-a/databases/db-a',
+      name: 'db-a', location: 'eastus', elasticPoolId: poolId,
+    }]));
+    metricsListMock.mockResolvedValue(series('dtu_consumption_percent', 2));
+    const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
+    expect((await service.detectIdleSqlDatabases())[0]?.resource.billingResourceIds).toEqual([poolId]);
+  });
   it('detects unattached disks', async () => {
     disksListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg-a/providers/Microsoft.Compute/disks/disk-a', name: 'disk-a', location: 'eastus', diskState: 'Unattached' }]));
     const service = new ResourceDetectorService(azureClient as never, undefined, offlinePricing());
@@ -879,6 +906,7 @@ describe('ResourceDetectorService', () => {
       // Two P10 disks, priced from the real meter rather than a flat guess.
       expect(items[0]?.estimatedMonthlySavings).toBe(349.86);
       expect(items[0]?.evidence?.savingsBasis).toBe('retail-price');
+      expect(items[0]?.resource.billingResourceIds).toEqual([osDisk.id, dataDisk.id]);
     });
 
     it('reports the provisioned storage as the evidence for the charge', async () => {

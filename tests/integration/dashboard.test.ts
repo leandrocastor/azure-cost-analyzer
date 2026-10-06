@@ -71,6 +71,8 @@ describe('dashboard routes', () => {
     const response = await request(app).get('/api/summary');
     expect(response.status).toBe(200);
     expect(response.body.idleResourceCount).toBe(2);
+    expect(response.body.cashCapture.items[0].status).toBe('unquantified');
+    expect(response.body.cashCapture.conditionalEstimateByCurrency).toEqual({});
   });
 
   it('serves the dashboard frontend', async () => {

@@ -522,7 +522,7 @@ export class ResourceDetectorService {
       const findings: IdleResource[] = [];
 
       for (const vm of stopped) {
-        const resource = this.normalizeResource(vm, 'Microsoft.Compute/virtualMachines');
+        const normalized = this.normalizeResource(vm, 'Microsoft.Compute/virtualMachines');
         const disks = this.attachedDiskIds(vm)
           .map((id) => disksById.get(id.toLowerCase()))
           .filter((disk): disk is ResourceLike => disk !== undefined);
@@ -531,6 +531,11 @@ export class ResourceDetectorService {
           continue;
         }
 
+        const resource = {
+          ...normalized,
+          billingResourceIds: this.attachedDiskIds(vm),
+        };
+        this.inventory.set(resource.id, resource);
         const monthlyCost = await this.sumDiskMonthlyCost(disks);
         const totalGb = disks.reduce((sum, disk) => sum + Number(readProperty<number>(disk, 'diskSizeGB') ?? 0), 0);
 
@@ -886,6 +891,8 @@ export class ResourceDetectorService {
   }
 
   private toResource(resource: ResourceLike, fallbackType: string): Resource {
+    const billingParent = readProperty<unknown>(resource, 'serverFarmId')
+      ?? readProperty<unknown>(resource, 'elasticPoolId');
     return {
       id: resource.id ?? `${fallbackType}/${resource.name ?? 'unknown'}`,
       name: resource.name ?? 'unknown',
@@ -895,6 +902,8 @@ export class ResourceDetectorService {
       sku: this.readSku(resource),
       tags: resource.tags ?? {},
       status: String(readProperty<string>(resource, 'provisioningState') ?? 'unknown'),
+      ...(typeof billingParent === 'string' && billingParent.length > 0
+        ? { billingResourceIds: [billingParent] } : {}),
     };
   }
 

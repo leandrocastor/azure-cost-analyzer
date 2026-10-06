@@ -43,6 +43,27 @@ const ledgerFor = (
 describe('CostReconciliationService', () => {
   const service = new CostReconciliationService();
 
+  it('reconciles shared-plan charges instead of treating a free site meter as the billing unit', () => {
+    const idle = buildIdle();
+    const planId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Web/serverFarms/plan';
+    idle.resource.billingResourceIds = [planId, planId.toUpperCase()];
+    const result = service.reconcile([idle], ledgerFor(planId, { '2026-09': 50 }, ['2026-09']));
+    expect(result.idleResources[0]?.estimatedMonthlySavings).toBe(50);
+    expect(result.idleResources[0]?.evidence?.billed?.monthly).toEqual({ '2026-09': 50 });
+  });
+
+  it('keeps a stopped VM opportunity when its disks are billed, and does not accept a partial disk ledger', () => {
+    const idle = buildIdle();
+    idle.resource.billingResourceIds = ['disk-a', 'disk-b'];
+    const data: ResourceCostLedger = {
+      currency: 'BRL', months: ['2026-09'],
+      resources: { 'disk-a': { '2026-09': 20 }, 'disk-b': { '2026-09': 30 } },
+    };
+    expect(service.reconcile([idle], data).idleResources[0]?.estimatedMonthlySavings).toBe(50);
+    delete data.resources['disk-b'];
+    expect(service.reconcile([idle], data).idleResources[0]?.evidence?.savingsBasis).not.toBe('observed-cost');
+  });
+
   it('drops findings for resources that were never billed', () => {
     const idle = buildIdle();
     const ledger = ledgerFor(idle.resource.id, { '2026-06': 0, '2026-07': 0 }, ['2026-06', '2026-07']);

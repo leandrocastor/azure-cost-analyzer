@@ -285,6 +285,8 @@ describe('CLI command classes', () => {
     const html = readFileSync(reportOutputPath, 'utf8');
     expect(html).toContain('<!DOCTYPE html>');
     expect(html).toContain('"subscriptionId":"sub-3"');
+    expect(html).toContain('"cashCapture"');
+    expect(html).toContain('Plano de Captura de Caixa');
   });
 
   it('reports export failures through spinner', async () => {
