@@ -83,6 +83,32 @@ describe('CostAnalyzerService', () => {
     expect(ledger.resources['/subscriptions/sub/disks/disk-a']).toEqual({ '2026-02': 25 });
   });
 
+  it('queries actual monthly costs grouped by the requested historical tag', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }, { name: 'TagValue' }, { name: 'UsageDate' }, { name: 'Currency' }],
+      rows: [[123.45, 'checkout', 202609, 'BRL']],
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+
+    const result = await service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', ['checkout']);
+
+    expect(result).toEqual([{ period: '2026-09', tagValue: 'checkout', amount: 123.45, currency: 'BRL' }]);
+    expect(usageMock).toHaveBeenCalledWith('/subscriptions/sub', expect.objectContaining({
+      dataset: expect.objectContaining({
+        granularity: 'Monthly',
+        grouping: [{ type: 'TagKey', name: 'app' }],
+        filter: { tags: { name: 'app', operator: 'In', values: ['checkout'] } },
+      }),
+    }));
+  });
+
+  it('fails explicitly when tagged billing results are truncated', async () => {
+    usageMock.mockResolvedValue({ columns: [], rows: [], nextLink: 'https://example.invalid/next' });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    await expect(service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', ['checkout']))
+      .rejects.toThrow('Cost Management truncated tag "app" results');
+  });
+
   it('retrieves costs by period', async () => {
     usageMock.mockResolvedValue({
       columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],

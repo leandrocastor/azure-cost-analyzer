@@ -103,6 +103,56 @@ describe('generateStaticReport', () => {
     expect(rendered).toContain('&lt;img');
     expect(rendered).not.toContain('<img');
   });
+
+  it('renders business efficiency changes and avoids exposing unsettled costs', () => {
+    const html = generateStaticReport({
+      ...baseData,
+      businessOutcomeLedger: {
+        latestSettledMonth: '2026-09',
+        observations: [
+          {
+            period: '2026-08', tagKey: 'app', tagValue: 'checkout', unit: 'orders', quantity: 100,
+            status: 'measured', currency: 'BRL', observedCost: 1000, costPerUnit: 10,
+            interpretation: 'First measured month.',
+          },
+          {
+            period: '2026-09', tagKey: 'app', tagValue: 'checkout', unit: 'orders', quantity: 120,
+            status: 'measured', currency: 'BRL', observedCost: 1500, costPerUnit: 12.5,
+            volumeChangePercent: 20, costPerUnitChangePercent: 25, efficiencyGap: 300,
+            interpretation: 'Unit cost increased.',
+          },
+          {
+            period: '2026-10', tagKey: 'app', tagValue: '</script><img src=x onerror=alert(1)>', unit: 'orders', quantity: 130,
+            status: 'awaiting_closed_month',
+            interpretation: 'Month is not settled.',
+          },
+        ],
+        limitations: ['Test limitation.'],
+      },
+    });
+    expect(html).not.toContain('</script><img src=x onerror=alert(1)>');
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    expect(embedded).not.toBeNull();
+    type ElementStub = { textContent: string; innerHTML: string; hidden: boolean; value: string };
+    const elements = new Map<string, ElementStub>();
+    const getElementById = (id: string): ElementStub => {
+      if (!elements.has(id)) elements.set(id, {
+        textContent: id === 'report-data' ? embedded![1]! : '',
+        innerHTML: '', hidden: true, value: id === 'idle-sort' ? 'idleScore-desc' : '',
+      });
+      return elements.get(id)!;
+    };
+    new Script(REPORT_CLIENT_SCRIPT).runInNewContext({ document: { getElementById }, Intl });
+    const rendered = getElementById('business-outcome-body').innerHTML;
+    expect(getElementById('business-outcome-section').hidden).toBe(false);
+    expect(rendered).toContain('R$');
+    expect(rendered).toContain('+25.0%');
+    expect(rendered).toContain('300');
+    expect(rendered).toContain('Aguardando fechamento');
+    expect(rendered).toContain('sinal de investigação');
+    expect(rendered).toContain('&lt;/script&gt;&lt;img');
+    expect(rendered).not.toContain('<img');
+  });
 });
 
 describe('generateStaticReport — seções de diferenciação', () => {

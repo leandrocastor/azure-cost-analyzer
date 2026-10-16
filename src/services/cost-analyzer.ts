@@ -32,6 +32,13 @@ export type ResourceCostLedger = {
   resources: Record<string, Record<string, number>>;
 };
 
+export type TaggedCostEntry = {
+  period: string;
+  tagValue: string;
+  amount: number;
+  currency: string;
+};
+
 /**
  * Marks a dimension that was not part of the query grouping, so it can be dropped
  * from the summary instead of being reported as a real cost bucket.
@@ -76,6 +83,7 @@ type QueryColumn = {
 type QueryResult = {
   columns?: QueryColumn[];
   rows?: unknown[][];
+  nextLink?: string;
 };
 
 type CostQueryClient = {
@@ -246,6 +254,92 @@ export class CostAnalyzerService {
   }
 
   /**
+   * Queries historical Azure charges by a named tag key. Cost Management applies
+   * the tag grouping to billing records for each month, avoiding retrospective
+   * attribution through today's resource-tag state.
+   */
+  public async queryCostsByTag(
+    subscriptionId: string,
+    startDate: string,
+    endDate: string,
+    tagKey: string,
+    tagValues: string[],
+  ): Promise<TaggedCostEntry[]> {
+    const values = [...new Set(tagValues.map((value) => value.trim()).filter(Boolean))].sort();
+    if (values.length === 0) return [];
+    const cacheKey = `${subscriptionId}:${startDate}:${endDate}:tag:${tagKey.toLowerCase()}:${JSON.stringify(values)}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached) return cached as TaggedCostEntry[];
+
+    const scope = `/subscriptions/${subscriptionId}`;
+    const client = new CostManagementClient(
+      this.azureClient.getCredential(),
+    ) as unknown as CostQueryClient;
+
+    try {
+      await this.qpuLimiter.acquire(QpuLimiter.estimateCost(startDate, endDate));
+      const result = await this.azureClient.executeWithRetry(
+        async () => {
+          try {
+            return await client.query.usage(scope, {
+              type: 'ActualCost',
+              timeframe: 'Custom',
+              timePeriod: { from: new Date(startDate), to: new Date(endDate) },
+              dataset: {
+                granularity: 'Monthly',
+                aggregation: { totalCost: { name: 'PreTaxCost', function: 'Sum' } },
+                grouping: [{ type: 'TagKey', name: tagKey }],
+                filter: { tags: { name: tagKey, operator: 'In', values } },
+              },
+            });
+          } catch (error: unknown) {
+            if (isThrottlingError(error)) this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
+            throw error;
+          }
+        },
+        { maxAttempts: 8, maxDelayMs: 180_000 },
+      );
+
+      if (!result) return [];
+      if (result.nextLink) {
+        throw new Error(`Cost Management truncated tag "${tagKey}" results; reduce --period or the number of metric rows for this tag.`);
+      }
+
+      const columns = (result.columns ?? []).map((column) => column.name ?? '');
+      const excluded = new Set(['pretaxcost', 'cost', 'totalcost', 'usagedate', 'billingmonth', 'date', 'currency', 'billingcurrency']);
+      const tagColumn = columns.find((column) => !excluded.has(column.toLowerCase()));
+      if ((result.rows?.length ?? 0) > 0 && !tagColumn) {
+        throw new Error(`Cost Management returned no tag-value column for "${tagKey}".`);
+      }
+
+      const entries: TaggedCostEntry[] = [];
+      for (const row of result.rows ?? []) {
+        const period = this.readMonth(row, columns);
+        const tagValue = tagColumn ? this.readColumn(row, columns, [tagColumn]) : undefined;
+        const amount = Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']));
+        const currency = this.readColumn(row, columns, ['Currency', 'BillingCurrency']);
+        if (!period || !tagValue || !Number.isFinite(amount) || !currency) {
+          throw new Error(`Cost Management returned an incomplete tagged-cost row for "${tagKey}".`);
+        }
+        entries.push({ period, tagValue, amount, currency });
+      }
+      this.cache.set(cacheKey, entries);
+      return entries;
+    } catch (error: unknown) {
+      this.logger.error('Azure tagged cost query failed', {
+        subscriptionId,
+        tagKey,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+      throw new AzureApiError(
+        `Failed to query historical costs for tag "${tagKey}": ${error instanceof Error ? error.message : 'unknown error'}`,
+        getStatusCode(error) ?? 500,
+        error,
+      );
+    }
+  }
+
+  /**
    * Folds the grouped rows into a per-resource, per-month ledger. Resource IDs are
    * lowercased because Azure is inconsistent about their casing between the billing
    * and the management APIs, and a casing mismatch would look like a missing charge.
@@ -311,6 +405,9 @@ export class CostAnalyzerService {
     }
 
     if (/^\d{8}$/.test(raw)) {
+      return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
+    }
+    if (/^\d{6}$/.test(raw)) {
       return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
     }
 

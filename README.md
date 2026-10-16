@@ -370,6 +370,37 @@ O Cost Management e o Advisor nativos mostram custo e risco de configuração, m
 
 Quando o ambiente já usa uma convenção de tags para identificar aplicação, cliente ou projeto (`app`, `customer`, `project`, entre variações comuns), o relatório agrupa o custo faturado real por essa tag, mostrando quanto cada unidade de negócio custa por mês e qual fatia do custo etiquetado ela representa. Essa seção **só aparece quando essa convenção de tags já existe no tenant** — nunca é inferida a partir de nomes de recursos, para não arriscar atribuir custo à unidade errada.
 
+#### Eficiência de Custo por Resultado
+
+O custo da infraestrutura faz sentido quando comparado ao que o negócio entregou. Com `--business-metrics`, o relatório cruza volume mensal de pedidos, requisições, clientes ativos ou outra unidade informada pelo cliente com o custo real agrupado historicamente pelo **Cost Management** ([API de consulta e dimensões por tag](https://learn.microsoft.com/en-us/rest/api/cost-management/query/usage?view=rest-cost-management-2023-11-01)), usando a tag e o valor presentes na fatura — não a tag atual do recurso aplicada retroativamente.
+
+Crie um CSV com uma linha por mês, unidade de negócio e métrica:
+
+```csv
+period,tag_key,tag_value,unit,quantity
+2026-07,app,checkout,pedidos,9000
+2026-08,app,checkout,pedidos,10000
+2026-09,app,checkout,pedidos,12000
+2026-10,app,checkout,pedidos,13000
+2026-07,app,billing,faturas,4600
+2026-08,app,billing,faturas,4500
+2026-09,app,billing,faturas,4400
+2026-10,app,billing,faturas,4700
+```
+
+Rode o mesmo `export` com o arquivo de métricas. `--period 4` mantém dois meses fechados disponíveis mesmo quando a execução ocorre dentro da janela conservadora de sete dias:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 4 \
+  --business-metrics "./business-metrics.csv" \
+  --output "./azure-cost-report.html"
+```
+
+O novo painel mostra custo por pedido/unidade, crescimento da fatura versus crescimento do volume e o **gap de eficiência**: quanto o custo do mês excedeu a linha-base do custo unitário do mês anterior para o volume atual. É um sinal para investigar, **não** uma promessa de economia ou prova de causalidade. Meses ainda não fechados, ausência de custo da tag, volume zero, valores líquidos negativos e moedas diferentes ficam explícitos, nunca viram divisão ou comparação inválida.
+
+O CSV deve conter exatamente `period` (`YYYY-MM`), `tag_key`, `tag_value`, `unit` e `quantity`; `quantity` deve ser número não negativo e cada combinação mês/tag/unidade deve ser única. Valores de tag são comparados exatamente; o volume precisa cobrir as mesmas assinaturas e o mesmo escopo de custos analisados. A janela de `--period` precisa incluir dois meses fechados consecutivos; o CLI rejeita janelas curtas em vez de gerar um relatório sem comparação. São feitas consultas adicionais do Cost Management por tag distinta e assinatura; é necessário ter permissão de leitura de custos em todas as assinaturas do relatório. A comparação usa `PreTaxCost` e só calcula custo unitário em meses fechados com uma janela conservadora de sete dias; impostos, câmbio e origem do volume não são inferidos. Sem `--business-metrics`, o comando e relatório existentes não mudam.
+
 #### FinOps Maturity Score
 
 Uma nota única de 0 a 100 (com conceito de A a E) que resume, com pesos fixos e documentados, quatro dimensões já validadas no restante do relatório — nenhum número novo é criado, apenas uma média ponderada transparente:

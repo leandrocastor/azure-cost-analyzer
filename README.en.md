@@ -370,6 +370,37 @@ Native Cost Management and Advisor show cost and configuration risk, but never t
 
 When the environment already uses a tagging convention to identify an application, customer, or project (`app`, `customer`, `project`, and common variations), the report groups real billed cost by that tag, showing how much each business unit costs per month and its share of the tagged cost. This section **only appears when that tagging convention already exists in the tenant** — it is never inferred from resource names, to avoid attributing cost to the wrong unit.
 
+#### Cost Efficiency per Business Outcome
+
+Infrastructure cost is meaningful when compared with what the business delivered. With `--business-metrics`, the report joins monthly orders, requests, active customers, or another customer-supplied unit to actual costs historically grouped by **Cost Management** ([query API and tag dimensions](https://learn.microsoft.com/en-us/rest/api/cost-management/query/usage?view=rest-cost-management-2023-11-01)) using the tag and value present in billing data — not today's resource tags applied retroactively.
+
+Create a CSV with one row per month, business unit and metric:
+
+```csv
+period,tag_key,tag_value,unit,quantity
+2026-07,app,checkout,orders,9000
+2026-08,app,checkout,orders,10000
+2026-09,app,checkout,orders,12000
+2026-10,app,checkout,orders,13000
+2026-07,app,billing,invoices,4600
+2026-08,app,billing,invoices,4500
+2026-09,app,billing,invoices,4400
+2026-10,app,billing,invoices,4700
+```
+
+Run the same `export` with the metrics file. `--period 4` keeps two closed months available even when running within the conservative seven-day billing window:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 4 \
+  --business-metrics "./business-metrics.csv" \
+  --output "./azure-cost-report.html"
+```
+
+The new panel shows cost per order/unit, bill growth versus business-volume growth, and an **efficiency gap**: how much current-month cost exceeded the previous month's unit-cost baseline at the current volume. This is a signal to investigate, **not** a savings promise or proof of causality. Unclosed months, missing tag costs, zero volume, negative net amounts and mixed currencies remain explicit instead of becoming invalid ratios or comparisons.
+
+The CSV must contain exactly `period` (`YYYY-MM`), `tag_key`, `tag_value`, `unit`, and `quantity`; `quantity` must be a non-negative number and each month/tag/unit combination must be unique. Tag values are matched exactly; business volume must cover the same subscriptions and cost scope being analyzed. The `--period` window must include two consecutive closed months; the CLI rejects shorter windows instead of generating a report without a comparison. One additional Cost Management query is made per distinct tag key and subscription; cost-read access is required across all subscriptions in the report. Comparisons use `PreTaxCost` and only calculate unit costs for conservatively closed months with a seven-day buffer; taxes, currency conversion and the source of business volume are not inferred. Without `--business-metrics`, the existing command and report are unchanged.
+
 #### FinOps Maturity Score
 
 A single 0 to 100 score (with an A to E grade) that summarizes, with fixed and documented weights, four dimensions already validated elsewhere in the report — no new number is created, only a transparent weighted average:
