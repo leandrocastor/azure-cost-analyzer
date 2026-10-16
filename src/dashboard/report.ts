@@ -1,5 +1,6 @@
 import type {
   AgingReport,
+  BusinessOutcomeLedger,
   CashCapturePlan,
   CostAnomaly,
   CostDiff,
@@ -36,6 +37,7 @@ export type StaticReportData = {
   savingsRealization?: SavingsRealization | undefined;
   decisionEngine?: DecisionEngineReport | undefined;
   cashCapture?: CashCapturePlan;
+  businessOutcomeLedger?: BusinessOutcomeLedger | undefined;
   aging?: AgingReport | undefined;
   forgottenEnvironments?: ForgottenEnvironmentReport | undefined;
   governance?: GovernanceReport | undefined;
@@ -417,6 +419,67 @@ export const REPORT_CLIENT_SCRIPT = `
           + '</div>'
           + '<p class="muted">' + esc(data.summary) + '</p>'
           + '<div class="table-scroll"><table><thead><tr><th>' + esc(data.groupTagKey) + '</th><th>Custo/mês</th><th>Recursos</th><th>% do custo etiquetado</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+
+      function renderBusinessOutcomeLedger() {
+        const data = REPORT.businessOutcomeLedger;
+        if (!data || !data.observations.length) return;
+        document.getElementById('business-outcome-section').hidden = false;
+        const labels = {
+          measured: 'Mensurado',
+          awaiting_closed_month: 'Aguardando fechamento',
+          no_billed_cost: 'Sem custo localizado',
+          zero_business_volume: 'Custo sem volume',
+          multiple_currencies: 'Moedas incompatíveis',
+          negative_net_cost: 'Crédito líquido',
+        };
+        const money = (value, currency) => {
+          try {
+            return new Intl.NumberFormat('pt-BR', {
+              style: 'currency',
+              currency,
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 4,
+            }).format(value);
+          } catch (err) {
+            return currency + ' ' + Number(value).toLocaleString('pt-BR', { maximumFractionDigits: 4 });
+          }
+        };
+        const percent = (value) => value === undefined
+          ? '—'
+          : (value > 0 ? '+' : '') + Number(value).toFixed(1) + '%';
+        const rows = data.observations.map(function (item) {
+          const cost = item.observedCost !== undefined
+            ? money(item.observedCost, item.currency)
+            : Object.entries(item.observedCostByCurrency || {})
+              .map(function (entry) { return money(entry[1], entry[0]); }).join(' · ') || '—';
+          const unitCost = item.costPerUnit !== undefined
+            ? money(item.costPerUnit, item.currency) + ' / ' + esc(item.unit)
+            : '—';
+          const gap = item.efficiencyGap !== undefined && item.efficiencyGap > 0
+            ? money(item.efficiencyGap, item.currency)
+            : '—';
+          return '<tr><td>' + esc(item.period) + '</td>'
+            + '<td><strong>' + esc(item.tagKey) + '=' + esc(item.tagValue) + '</strong></td>'
+            + '<td>' + Number(item.quantity).toLocaleString('pt-BR') + ' ' + esc(item.unit) + '</td>'
+            + '<td>' + esc(cost) + '</td><td>' + esc(unitCost) + '</td>'
+            + '<td>' + esc(percent(item.volumeChangePercent)) + '</td>'
+            + '<td>' + esc(percent(item.costPerUnitChangePercent)) + '</td>'
+            + '<td>' + esc(gap) + '</td>'
+            + '<td>' + esc(labels[item.status] || item.status) + '<details><summary>Leitura</summary><p>'
+            + esc(item.interpretation) + '</p></details></td></tr>';
+        }).join('');
+        const deteriorationCount = data.observations.filter(function (item) {
+          return item.status === 'measured' && item.efficiencyGap !== undefined && item.efficiencyGap > 0;
+        }).length;
+        document.getElementById('business-outcome-body').innerHTML =
+          '<p><strong>' + deteriorationCount + '</strong> observação(ões) com custo unitário acima do mês anterior consecutivo.</p>'
+          + '<p class="muted">Meses comparáveis até ' + esc(data.latestSettledMonth || 'indisponível')
+          + '. O custo acima da linha-base é um sinal de investigação, não economia recuperável.</p>'
+          + data.limitations.map(function (text) { return '<p class="muted">' + esc(text) + '</p>'; }).join('')
+          + '<div class="table-scroll"><table><thead><tr><th>Mês</th><th>Unidade de negócio</th><th>Volume informado</th><th>Custo observado</th><th>Custo por unidade</th><th>Volume vs. mês anterior</th><th>Custo/unit vs. mês anterior</th><th>Gap de eficiência*</th><th>Status</th></tr></thead><tbody>'
+          + rows + '</tbody></table></div>'
+          + '<p class="muted">* Gap calculado contra o custo unitário do mês anterior, aplicado ao volume atual; não é previsão nem promessa de economia.</p>';
       }
 
       function renderMaturityScore() {
@@ -884,6 +947,7 @@ export const REPORT_CLIENT_SCRIPT = `
       renderMaturityScore();
       renderGovernance();
       renderUnitEconomics();
+      renderBusinessOutcomeLedger();
       renderWaf();
       renderSavingsRealization();
       renderInaction();
@@ -935,6 +999,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     cashCapture: data.cashCapture ?? new CashCaptureService().build(
       data.recommendations, data.idleResources, data.generatedAt, data.costs.currency,
     ),
+    businessOutcomeLedger: data.businessOutcomeLedger ?? null,
     aging: data.aging ?? null,
     forgottenEnvironments: data.forgottenEnvironments ?? null,
     governance: data.governance ?? null,
@@ -1364,6 +1429,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="card">
           <p class="section-hint">Custo faturado real agrupado pela tag de aplicação/cliente/projeto em uso no ambiente (ex.: app, customer, project), permitindo enxergar quanto cada unidade de negócio custa por mês. Aparece apenas quando essa convenção de tags já existe no ambiente — nunca é inferida ou inventada.</p>
           <div id="unit-economics-body"></div>
+        </div>
+      </section>
+
+      <section id="business-outcome-section" hidden>
+        <h2>Eficiência de Custo por Resultado</h2>
+        <div class="card">
+          <p class="section-hint">Cruza volume de negócio fornecido pelo cliente com custos históricos do Cost Management agrupados pela tag. Mostra quando a fatura cresce mais rápido que pedidos, requisições ou outra unidade operacional.</p>
+          <div id="business-outcome-body"></div>
         </div>
       </section>
 

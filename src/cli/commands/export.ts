@@ -1,17 +1,26 @@
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Command, Flags } from '@oclif/core';
 import ora from 'ora';
 
 import { generateStaticReport } from '@/dashboard/report';
-import type { CostDiff, CostEntry, CostSummary, IdleResource, InactionCost, Resource } from '@/models';
+import type {
+  BusinessMetricInput,
+  CostDiff,
+  CostEntry,
+  CostSummary,
+  IdleResource,
+  InactionCost,
+  Resource,
+} from '@/models';
 import { AgingDetectorService } from '@/services/aging-detector';
 import { AzureClientService, type AccessibleSubscription } from '@/services/azure-client';
 import { CostAnalyzerService } from '@/services/cost-analyzer';
 import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
 import { CashCaptureService } from '@/services/cash-capture';
+import { BusinessOutcomeLedgerService } from '@/services/business-outcome-ledger';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { SavingsRealizationService } from '@/services/savings-realization';
@@ -152,6 +161,10 @@ export default class ExportCommand extends Command {
       description:
         'Comma-separated tag keys used to attribute waste to an owner (default: owner, team, costCenter, ...).',
     }),
+    'business-metrics': Flags.string({
+      description:
+        'Optional CSV with monthly business volume (period,tag_key,tag_value,unit,quantity); --period must cover two closed months.',
+    }),
     currency: Flags.string({
       description: 'Currency for retail price lookups (ISO code, e.g. BRL). Defaults to the billing currency reported by Azure.',
     }),
@@ -166,6 +179,27 @@ export default class ExportCommand extends Command {
    */
   public async run(): Promise<void> {
     const { flags } = await this.parse(ExportCommand);
+    const businessOutcomeService = new BusinessOutcomeLedgerService();
+    const businessMetrics: BusinessMetricInput[] | undefined = flags['business-metrics']
+      ? businessOutcomeService.parseCsv(await readFile(path.resolve(flags['business-metrics']), 'utf8'))
+      : undefined;
+    const endDate = new Date();
+    const startDate = new Date(
+      Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() - (flags.period - 1), 1),
+    );
+    const queryStartMonth = startDate.toISOString().slice(0, 7);
+    const queryEndMonth = endDate.toISOString().slice(0, 7);
+    if (businessMetrics) {
+      const outsideQuery = businessMetrics.find(
+        (metric) => metric.period < queryStartMonth || metric.period > queryEndMonth,
+      );
+      if (outsideQuery) {
+        throw new Error(
+          `Business metric ${outsideQuery.tagKey}=${outsideQuery.tagValue} (${outsideQuery.period}) is outside the ${flags.period}-month cost query window (${queryStartMonth}..${queryEndMonth}).`,
+        );
+      }
+      businessOutcomeService.assertComparisonWindow(queryStartMonth, endDate.toISOString());
+    }
     const spinner = ora('Discovering accessible Azure subscriptions...').start();
 
     try {
@@ -174,11 +208,6 @@ export default class ExportCommand extends Command {
       const costAnalyzer = new CostAnalyzerService(azureClient);
       const optimizer = new OptimizerService();
 
-      const endDate = new Date();
-      const startDate = new Date(
-        Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() - (flags.period - 1), 1),
-      );
-
       const perSubscriptionCosts: CostSummary[] = [];
       const idleResources: IdleResource[] = [];
       const warnings: string[] = [];
@@ -186,6 +215,7 @@ export default class ExportCommand extends Command {
       const inventory: Resource[] = [];
       const resourceLedgers: ResourceCostLedger[] = [];
       const resourceLedgersBySubscription = new Map<string, ResourceCostLedger>();
+      const taggedCostsBySubscription = new Map<string, Map<string, Awaited<ReturnType<CostAnalyzerService['queryCostsByTag']>>>>();
       const costEntries: CostEntry[] = [];
       const creationTimes = new Map<string, string>();
 
@@ -242,6 +272,34 @@ export default class ExportCommand extends Command {
           warnings.push(
             `Custos indisponíveis para "${subscription.displayName}": ${error instanceof Error ? error.message : 'erro desconhecido'}`,
           );
+        }
+
+        if (businessMetrics) {
+          if (!subscriptionCostSucceeded) {
+            throw new Error(
+              `A análise de custo por resultado exige acesso completo ao Cost Management. Custos não puderam ser consultados para "${subscription.displayName}".`,
+            );
+          }
+          const subscriptionTagCosts = new Map<string, Awaited<ReturnType<CostAnalyzerService['queryCostsByTag']>>>();
+          const tagKeys = new Map(
+            businessMetrics.map((metric) => [metric.tagKey.toLowerCase(), metric.tagKey]),
+          );
+          for (const [normalizedTagKey, tagKey] of tagKeys) {
+            spinner.text = `Querying historical costs by tag "${tagKey}" for ${progress}`;
+            const tagValues = businessMetrics
+              .filter((metric) => metric.tagKey.toLowerCase() === normalizedTagKey)
+              .map((metric) => metric.tagValue);
+            const uniqueTagValues = [...new Set(tagValues)];
+            const taggedCosts = await costAnalyzer.queryCostsByTag(
+              subscription.id,
+              startDate.toISOString().slice(0, 10),
+              endDate.toISOString().slice(0, 10),
+              tagKey,
+              uniqueTagValues,
+            );
+            subscriptionTagCosts.set(normalizedTagKey, taggedCosts);
+          }
+          taggedCostsBySubscription.set(subscription.id.toLowerCase(), subscriptionTagCosts);
         }
 
         spinner.text = `Detecting idle resources for ${progress}`;
@@ -359,6 +417,9 @@ export default class ExportCommand extends Command {
           : `${analyzedSubscriptions.length} subscriptions: ${analyzedSubscriptions.map((subscription) => subscription.displayName).join(', ')}`;
 
       const generatedAt = new Date().toISOString();
+      const businessOutcomeLedger = businessMetrics
+        ? businessOutcomeService.build(businessMetrics, taggedCostsBySubscription, generatedAt)
+        : undefined;
 
       const ownerTagKeys = flags['owner-tags']
         ?.split(',')
@@ -477,6 +538,7 @@ export default class ExportCommand extends Command {
         savingsRealization,
         decisionEngine,
         cashCapture,
+        businessOutcomeLedger,
         aging,
         forgottenEnvironments,
         governance,

@@ -590,6 +590,45 @@ export const UnitEconomicsReportSchema = z.object({
   summary: z.string().min(1),
 });
 
+export const BusinessMetricInputSchema = z.object({
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  tagKey: z.string().trim().min(1),
+  tagValue: z.string().trim().min(1),
+  unit: z.string().trim().min(1),
+  quantity: nonNegativeNumber,
+});
+
+export const BusinessOutcomeObservationSchema = z.object({
+  period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  tagKey: z.string().min(1),
+  tagValue: z.string().min(1),
+  unit: z.string().min(1),
+  quantity: nonNegativeNumber,
+  status: z.enum([
+    'measured',
+    'awaiting_closed_month',
+    'no_billed_cost',
+    'zero_business_volume',
+    'multiple_currencies',
+    'negative_net_cost',
+  ]),
+  currency: z.string().min(1).optional(),
+  observedCost: costAmount.optional(),
+  observedCostByCurrency: z.record(z.string(), costAmount).optional(),
+  costPerUnit: nonNegativeNumber.optional(),
+  spendChangePercent: z.number().finite().optional(),
+  volumeChangePercent: z.number().finite().optional(),
+  costPerUnitChangePercent: z.number().finite().optional(),
+  efficiencyGap: nonNegativeNumber.optional(),
+  interpretation: z.string().min(1),
+});
+
+export const BusinessOutcomeLedgerSchema = z.object({
+  latestSettledMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  observations: z.array(BusinessOutcomeObservationSchema),
+  limitations: z.array(z.string().min(1)),
+});
+
 /**
  * A single weighted dimension of the FinOps maturity score, each backed by a
  * metric already computed elsewhere in the report (WAF, ownership tagging,
@@ -655,5 +694,8 @@ export type GovernanceRankingEntry = z.infer<typeof GovernanceRankingEntrySchema
 export type GovernanceReport = z.infer<typeof GovernanceReportSchema>;
 export type UnitEconomicsEntry = z.infer<typeof UnitEconomicsEntrySchema>;
 export type UnitEconomicsReport = z.infer<typeof UnitEconomicsReportSchema>;
+export type BusinessMetricInput = z.infer<typeof BusinessMetricInputSchema>;
+export type BusinessOutcomeObservation = z.infer<typeof BusinessOutcomeObservationSchema>;
+export type BusinessOutcomeLedger = z.infer<typeof BusinessOutcomeLedgerSchema>;
 export type MaturityDimension = z.infer<typeof MaturityDimensionSchema>;
 export type FinOpsMaturityScore = z.infer<typeof FinOpsMaturityScoreSchema>;

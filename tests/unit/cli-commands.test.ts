@@ -29,6 +29,7 @@ const azureClientMock = vi.hoisted(() => ({
 const costAnalyzerMock = vi.hoisted(() => ({
   queryCosts: vi.fn(async () => mockCostSummary),
   queryResourceCosts: vi.fn(async () => ({ currency: mockCostSummary.currency, months: [], resources: {} })),
+  queryCostsByTag: vi.fn(async () => []),
   getCostsByPeriod: vi.fn(async () => []),
   detectAnomalies: vi.fn(() => []),
 }));
@@ -95,6 +96,7 @@ const outputPath = path.resolve(__dirname, '../fixtures/cost-command-output.csv'
 const reportOutputPath = path.resolve(__dirname, '../fixtures/report-command-output.html');
 const previousReportPath = path.resolve(__dirname, '../fixtures/previous-report-command-output.html');
 const remediationScriptPath = path.resolve(__dirname, '../fixtures/apply-remediation.sh');
+const businessMetricsPath = path.resolve(__dirname, '../fixtures/business-metrics-command-input.csv');
 
 describe('CLI command classes', () => {
   beforeEach(() => {
@@ -108,6 +110,7 @@ describe('CLI command classes', () => {
     azureClientMock.listAccessibleSubscriptions.mockClear();
     costAnalyzerMock.queryCosts.mockClear();
     costAnalyzerMock.queryResourceCosts.mockClear();
+    costAnalyzerMock.queryCostsByTag.mockClear();
     costAnalyzerMock.getCostsByPeriod.mockClear();
     costAnalyzerMock.detectAnomalies.mockClear();
     resourceDetectorMock.detectAll.mockClear();
@@ -136,6 +139,7 @@ describe('CLI command classes', () => {
       months: [],
       resources: {},
     });
+    costAnalyzerMock.queryCostsByTag.mockResolvedValue([]);
     costAnalyzerMock.getCostsByPeriod.mockResolvedValue([]);
     costAnalyzerMock.detectAnomalies.mockReturnValue([]);
     resourceDetectorMock.detectAll.mockResolvedValue(mockIdleResources);
@@ -152,6 +156,7 @@ describe('CLI command classes', () => {
     if (existsSync(previousReportPath)) {
       unlinkSync(previousReportPath);
     }
+    if (existsSync(businessMetricsPath)) unlinkSync(businessMetricsPath);
   });
 
   afterAll(() => {
@@ -167,6 +172,7 @@ describe('CLI command classes', () => {
     if (existsSync(previousReportPath)) {
       unlinkSync(previousReportPath);
     }
+    if (existsSync(businessMetricsPath)) unlinkSync(businessMetricsPath);
   });
 
   it('renders costs in table format', async () => {
@@ -287,6 +293,56 @@ describe('CLI command classes', () => {
     expect(html).toContain('"subscriptionId":"sub-3"');
     expect(html).toContain('"cashCapture"');
     expect(html).toContain('Plano de Captura de Caixa');
+  });
+
+  it('queries monthly billing by business tag and embeds outcome efficiency in the report', async () => {
+    const monthAtOffset = (offset: number): string => {
+      const date = new Date();
+      date.setUTCDate(1);
+      date.setUTCMonth(date.getUTCMonth() - offset);
+      return date.toISOString().slice(0, 7);
+    };
+    const currentMonth = monthAtOffset(0);
+    const settledCandidates = [monthAtOffset(1), monthAtOffset(2)];
+    const now = new Date();
+    const settledMonth = now.getUTCDate() <= 7 ? settledCandidates[1]! : settledCandidates[0]!;
+    const previousDate = new Date(`${settledMonth}-01T00:00:00.000Z`);
+    previousDate.setUTCMonth(previousDate.getUTCMonth() - 1);
+    const previousMonth = previousDate.toISOString().slice(0, 7);
+    writeFileSync(businessMetricsPath, [
+      'period,tag_key,tag_value,unit,quantity',
+      `${previousMonth},app,checkout,orders,100`,
+      `${settledMonth},app,checkout,orders,120`,
+      `${currentMonth},app,checkout,orders,130`,
+    ].join('\n'));
+    costAnalyzerMock.queryCostsByTag.mockResolvedValue([
+      { period: previousMonth, tagValue: 'checkout', amount: 100, currency: 'USD' },
+      { period: settledMonth, tagValue: 'checkout', amount: 150, currency: 'USD' },
+    ]);
+
+    await ExportCommand.run([
+      '--output', reportOutputPath,
+      '--period', '4',
+      '--business-metrics', businessMetricsPath,
+    ]);
+
+    expect(costAnalyzerMock.queryCostsByTag).toHaveBeenCalledTimes(2);
+    expect(costAnalyzerMock.queryCostsByTag).toHaveBeenCalledWith(
+      'sub-a', expect.any(String), expect.any(String), 'app', ['checkout'],
+    );
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('"businessOutcomeLedger"');
+    expect(html).toContain('"efficiencyGap":60');
+    expect(html).toContain('Eficiência de Custo por Resultado');
+  });
+
+  it('rejects an invalid business metrics CSV before contacting Azure', async () => {
+    writeFileSync(businessMetricsPath, 'period,tag_key,tag_value,unit,quantity\n2026-09,app,checkout,orders,-1');
+    await expect(ExportCommand.run([
+      '--output', reportOutputPath,
+      '--business-metrics', businessMetricsPath,
+    ])).rejects.toThrow('CSV line 2: invalid month, tag, unit, or non-negative numeric quantity.');
+    expect(azureClientMock.listAccessibleSubscriptions).not.toHaveBeenCalled();
   });
 
   it('reports export failures through spinner', async () => {
