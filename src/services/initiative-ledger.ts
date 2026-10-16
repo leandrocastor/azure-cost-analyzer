@@ -4,6 +4,7 @@ import {
 } from '@/models';
 import type {
   BusinessOutcomeLedger,
+  FinOpsInitiativeEvidenceIntegrity,
   FinOpsInitiativeInput,
   FinOpsInitiativeLedger,
   FinOpsInitiativeLedgerItem,
@@ -67,11 +68,63 @@ export class InitiativeLedgerService {
     generatedAt: string,
   ): FinOpsInitiativeLedger {
     const latestSettled = latestSettledMonth(generatedAt);
+    const items = initiatives.map((initiative) =>
+      this.measure(initiative, businessOutcome, ledgersBySubscription, latestSettled),
+    );
+    const businessMetricChecks = initiatives.flatMap((initiative) => {
+      const metrics = this.matchingMetrics(initiative, businessOutcome);
+      const before = metrics.filter((item) => item.period < initiative.appliedMonth);
+      const after = metrics.filter((item) =>
+        item.period > initiative.appliedMonth &&
+        (!latestSettled || item.period <= latestSettled),
+      );
+      const baseline = before.filter((item) => item.status === 'measured').at(-1) ?? before.at(-1);
+      const post = after.at(-1);
+      return [
+        {
+          initiativeId: initiative.id,
+          side: 'baseline' as const,
+          ...(baseline ? { period: baseline.period, status: baseline.status } : { status: 'missing_record' as const }),
+        },
+        {
+          initiativeId: initiative.id,
+          side: 'post' as const,
+          ...(post ? { period: post.period, status: post.status } : { status: 'missing_record' as const }),
+        },
+      ];
+    });
+    const billingCoverageChecks = initiatives.flatMap((initiative) => {
+      const metrics = this.matchingMetrics(initiative, businessOutcome);
+      const before = metrics.filter((item) => item.period < initiative.appliedMonth);
+      const after = metrics.filter((item) =>
+        item.period > initiative.appliedMonth &&
+        (!latestSettled || item.period <= latestSettled),
+      );
+      const baseline = before.filter((item) => item.status === 'measured').at(-1) ?? before.at(-1);
+      const post = after.at(-1);
+      const scopes = new Set(
+        [...initiative.sourceResourceIds, ...initiative.destinationResourceIds]
+          .map((id) => subscriptionIdFromResourceId(id))
+          .filter((id): id is string => Boolean(id)),
+      );
+      return [
+        ...(baseline ? scopesForMonth(initiative.id, baseline.period, 'baseline', scopes, ledgersBySubscription) : []),
+        ...(post ? scopesForMonth(initiative.id, post.period, 'post', scopes, ledgersBySubscription) : []),
+      ];
+    });
+    const comparableCount = items.filter((item) =>
+      item.status === 'improved' || item.status === 'regressed' || item.status === 'unchanged',
+    ).length;
     return FinOpsInitiativeLedgerSchema.parse({
       latestSettledMonth: latestSettled,
-      items: initiatives.map((initiative) =>
-        this.measure(initiative, businessOutcome, ledgersBySubscription, latestSettled),
-      ),
+      items,
+      evidenceIntegrity: {
+        initiativeCount: initiatives.length,
+        comparableCount,
+        inconclusiveCount: initiatives.length - comparableCount,
+        businessMetricChecks,
+        billingCoverageChecks,
+      },
       limitations: [
         'Cada iniciativa precisa informar todos os IDs de cobrança da origem e do destino; itens omitidos não entram no custo medido.',
         'O volume de negócio e a tag são fornecidos pelo cliente; a comparação não prova que a iniciativa causou a variação.',
@@ -88,13 +141,7 @@ export class InitiativeLedgerService {
     ledgersBySubscription: ReadonlyMap<string, ResourceCostLedger>,
     latestSettled: string | undefined,
   ): FinOpsInitiativeLedgerItem {
-    const metricMatches = businessOutcome.observations
-      .filter((item) =>
-        item.tagKey.toLowerCase() === initiative.tagKey.toLowerCase() &&
-        item.tagValue === initiative.tagValue &&
-        item.unit.toLowerCase() === initiative.unit.toLowerCase(),
-      )
-      .sort((left, right) => left.period.localeCompare(right.period));
+    const metricMatches = this.matchingMetrics(initiative, businessOutcome);
     const baseline = metricMatches.filter((item) =>
       item.period < initiative.appliedMonth && item.status === 'measured',
     ).at(-1);
@@ -111,6 +158,7 @@ export class InitiativeLedgerService {
         explanation: 'Não há mês fechado com custo e volume medidos antes da iniciativa.',
       };
     }
+
     if (!observed) {
       const baselineCost = this.measureCosts(initiative, baseline.period, ledgersBySubscription);
       if (baselineCost.kind === 'unavailable') {
@@ -121,6 +169,7 @@ export class InitiativeLedgerService {
           explanation: 'A cobertura mensal do Cost Management não inclui todas as unidades declaradas para a linha de base.',
         };
       }
+
       if (baselineCost.kind === 'multiple_currencies') {
         return {
           initiative,
@@ -257,6 +306,19 @@ export class InitiativeLedgerService {
     };
   }
 
+  private matchingMetrics(
+    initiative: FinOpsInitiativeInput,
+    businessOutcome: BusinessOutcomeLedger,
+  ): BusinessOutcomeLedger['observations'] {
+    return businessOutcome.observations
+      .filter((item) =>
+        item.tagKey.toLowerCase() === initiative.tagKey.toLowerCase() &&
+        item.tagValue === initiative.tagValue &&
+        item.unit.toLowerCase() === initiative.unit.toLowerCase(),
+      )
+      .sort((left, right) => left.period.localeCompare(right.period));
+  }
+
   private measureCosts(
     initiative: FinOpsInitiativeInput,
     month: string,
@@ -325,3 +387,20 @@ export class InitiativeLedgerService {
     };
   }
 }
+
+const scopesForMonth = (
+  initiativeId: string,
+  period: string,
+  side: 'baseline' | 'post',
+  subscriptionIds: Set<string>,
+  ledgersBySubscription: ReadonlyMap<string, ResourceCostLedger>,
+): FinOpsInitiativeEvidenceIntegrity['billingCoverageChecks'] =>
+  [...subscriptionIds].map((subscriptionId) => ({
+    initiativeId,
+    period,
+    side,
+    subscriptionId,
+    status: ledgersBySubscription.get(subscriptionId)?.coveredMonths?.includes(period)
+      ? 'covered' as const
+      : 'unavailable' as const,
+  }));

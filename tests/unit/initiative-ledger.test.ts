@@ -98,6 +98,17 @@ describe('InitiativeLedgerService', () => {
       netSpendReduction: 400,
     });
     expect(result.items[0]?.explanation).toContain('não atribuída causalmente');
+    expect(result.evidenceIntegrity).toMatchObject({
+      initiativeCount: 1,
+      comparableCount: 1,
+      inconclusiveCount: 0,
+      businessMetricChecks: [
+        { initiativeId: 'resize-checkout', side: 'baseline', period: '2026-06', status: 'measured' },
+        { initiativeId: 'resize-checkout', side: 'post', period: '2026-09', status: 'measured' },
+      ],
+    });
+    expect(result.evidenceIntegrity.billingCoverageChecks).toHaveLength(4);
+    expect(result.evidenceIntegrity.billingCoverageChecks.every((check) => check.status === 'covered')).toBe(true);
   });
 
   it('does not call a higher bill an efficiency regression when unit cost improved', () => {
@@ -147,6 +158,7 @@ describe('InitiativeLedgerService', () => {
     ]);
     const withoutCoverage = service.build([initiative], business, new Map(), '2026-10-16T12:00:00.000Z');
     expect(withoutCoverage.items[0]?.status).toBe('billing_unavailable');
+    expect(withoutCoverage.evidenceIntegrity.billingCoverageChecks.every((check) => check.status === 'unavailable')).toBe(true);
 
     const mixedCurrencies = service.build([initiative], business, new Map([
       ['sub-a', ledger({ [sourceId.toLowerCase()]: { '2026-06': 100, '2026-09': 50 } })],
@@ -194,5 +206,20 @@ describe('InitiativeLedgerService', () => {
       '2026-10-16T12:00:00.000Z',
     );
     expect(noBaselineSpend.items[0]?.status).toBe('no_baseline_spend');
+  });
+
+  it('shows missing business periods without inventing metric or billing coverage', () => {
+    const result = service.build(
+      [initiative],
+      outcomes([]),
+      new Map(),
+      '2026-10-16T12:00:00.000Z',
+    );
+    expect(result.items[0]?.status).toBe('baseline_unavailable');
+    expect(result.evidenceIntegrity.businessMetricChecks).toEqual([
+      { initiativeId: initiative.id, side: 'baseline', status: 'missing_record' },
+      { initiativeId: initiative.id, side: 'post', status: 'missing_record' },
+    ]);
+    expect(result.evidenceIntegrity.billingCoverageChecks).toEqual([]);
   });
 });

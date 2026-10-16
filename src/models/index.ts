@@ -689,9 +689,41 @@ export const FinOpsInitiativeLedgerItemSchema = z.object({
   explanation: z.string().min(1),
 });
 
+export const InitiativeBillingCoverageCheckSchema = z.object({
+  initiativeId: z.string().min(1),
+  period: z.string().regex(/^\d{4}-\d{2}$/),
+  side: z.enum(['baseline', 'post']),
+  subscriptionId: z.string().min(1),
+  status: z.enum(['covered', 'unavailable']),
+});
+
+export const InitiativeBusinessMetricCheckSchema = z.object({
+  initiativeId: z.string().min(1),
+  side: z.enum(['baseline', 'post']),
+  period: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  status: z.enum([
+    'measured',
+    'awaiting_closed_month',
+    'no_billed_cost',
+    'zero_business_volume',
+    'multiple_currencies',
+    'negative_net_cost',
+    'missing_record',
+  ]),
+});
+
+export const FinOpsInitiativeEvidenceIntegritySchema = z.object({
+  initiativeCount: z.number().int().min(0),
+  comparableCount: z.number().int().min(0),
+  inconclusiveCount: z.number().int().min(0),
+  businessMetricChecks: z.array(InitiativeBusinessMetricCheckSchema),
+  billingCoverageChecks: z.array(InitiativeBillingCoverageCheckSchema),
+});
+
 export const FinOpsInitiativeLedgerSchema = z.object({
   latestSettledMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
   items: z.array(FinOpsInitiativeLedgerItemSchema),
+  evidenceIntegrity: FinOpsInitiativeEvidenceIntegritySchema,
   limitations: z.array(z.string().min(1)),
 });
 
@@ -765,6 +797,7 @@ export type BusinessOutcomeObservation = z.infer<typeof BusinessOutcomeObservati
 export type BusinessOutcomeLedger = z.infer<typeof BusinessOutcomeLedgerSchema>;
 export type FinOpsInitiativeInput = z.infer<typeof FinOpsInitiativeInputSchema>;
 export type FinOpsInitiativeLedgerItem = z.infer<typeof FinOpsInitiativeLedgerItemSchema>;
+export type FinOpsInitiativeEvidenceIntegrity = z.infer<typeof FinOpsInitiativeEvidenceIntegritySchema>;
 export type FinOpsInitiativeLedger = z.infer<typeof FinOpsInitiativeLedgerSchema>;
 export type MaturityDimension = z.infer<typeof MaturityDimensionSchema>;
 export type FinOpsMaturityScore = z.infer<typeof FinOpsMaturityScoreSchema>;

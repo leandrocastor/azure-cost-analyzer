@@ -159,6 +159,19 @@ describe('generateStaticReport', () => {
       ...baseData,
       initiativeLedger: {
         latestSettledMonth: '2026-09',
+        evidenceIntegrity: {
+          initiativeCount: 1,
+          comparableCount: 1,
+          inconclusiveCount: 0,
+          businessMetricChecks: [
+            { initiativeId: 'move-api', side: 'baseline', period: '2026-06', status: 'measured' },
+            { initiativeId: 'move-api', side: 'post', period: '2026-09', status: 'measured' },
+          ],
+          billingCoverageChecks: [
+            { initiativeId: 'move-api', period: '2026-06', side: 'baseline', subscriptionId: 'sub-a', status: 'covered' },
+            { initiativeId: 'move-api', period: '2026-09', side: 'post', subscriptionId: 'sub-a', status: 'covered' },
+          ],
+        },
         limitations: ['Medição observacional.'],
         items: [{
           initiative: {
@@ -210,6 +223,10 @@ describe('generateStaticReport', () => {
     const rendered = getElementById('initiative-ledger-body').innerHTML;
     expect(getElementById('initiative-ledger-section').hidden).toBe(false);
     expect(rendered).toContain('Custo/unit melhorou');
+    expect(rendered).toContain('Integridade da evidência');
+    expect(rendered).toContain('2 / 2');
+    expect(rendered).toContain('Métricas de negócio por iniciativa');
+    expect(rendered).toContain('Mês coberto pela consulta');
     expect(rendered).toContain('US$');
     expect(rendered).toContain('requests');
     expect(rendered).toContain('&lt;/td&gt;&lt;img');

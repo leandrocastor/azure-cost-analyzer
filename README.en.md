@@ -440,6 +440,8 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 
 The panel shows cost and volume before/after, cost-per-unit change, source reduction, destination increase, and net reduction across the declared units. `appliedMonth` is excluded from the comparison: the baseline is the last closed month before it, and the measurement uses the latest closed month after it. Use full billing resource IDs and include every source/destination unit; the report does not infer dependencies or indirect costs. If coverage, currency, volume, or baseline evidence is insufficient, the initiative remains explicitly unmeasured. An improvement observed afterward is observational evidence — seasonality and other changes may influence it — not proof of causality or guaranteed payment reduction.
 
+The panel also includes **Evidence Integrity**: explicit counts of comparable and inconclusive initiatives, business-metric states, and monthly Cost Management coverage by subscription. Expand the details to see which period or scope is missing. These are evidence counts, not a synthetic confidence score; “month covered” confirms the scope was queried, not that a resource incurred a charge.
+
 #### FinOps Maturity Score
 
 A single 0 to 100 score (with an A to E grade) that summarizes, with fixed and documented weights, four dimensions already validated elsewhere in the report — no new number is created, only a transparent weighted average:

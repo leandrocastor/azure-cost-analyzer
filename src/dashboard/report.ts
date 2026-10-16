@@ -707,8 +707,46 @@ export const REPORT_CLIENT_SCRIPT = `
             + '<td>' + money(item.netSpendReduction, item.currency) + '</td>'
             + '<td class="muted">' + esc(item.explanation) + '</td></tr>';
         }).join('');
+        const integrity = data.evidenceIntegrity;
+        const metricStatusLabels = {
+          measured: 'Mensurada',
+          awaiting_closed_month: 'Mês ainda aberto',
+          no_billed_cost: 'Sem custo faturado por tag',
+          zero_business_volume: 'Volume zero',
+          multiple_currencies: 'Moedas incompatíveis',
+          negative_net_cost: 'Crédito líquido',
+          missing_record: 'Métrica não fornecida',
+        };
+        const metricChecks = integrity.businessMetricChecks.map(function (check) {
+          return '<tr><td>' + esc(check.initiativeId) + '</td><td>' + (check.side === 'baseline' ? 'Antes' : 'Depois')
+            + '</td><td>' + esc(check.period || '—') + '</td><td>'
+            + esc(metricStatusLabels[check.status] || check.status) + '</td></tr>';
+        }).join('');
+        const billingChecks = integrity.billingCoverageChecks.map(function (check) {
+          return '<tr><td>' + esc(check.initiativeId) + '</td><td>' + (check.side === 'baseline' ? 'Antes' : 'Depois')
+            + '</td><td>' + esc(check.period) + '</td><td>' + esc(check.subscriptionId) + '</td><td>'
+            + (check.status === 'covered' ? 'Mês coberto pela consulta' : 'Cobertura indisponível') + '</td></tr>';
+        }).join('');
         document.getElementById('initiative-ledger-body').innerHTML =
-          '<p class="muted">Último mês fechado: ' + esc(data.latestSettledMonth || 'indisponível')
+          '<h3>Integridade da evidência</h3>'
+          + '<div class="inaction-kpis">'
+          + '<div class="inaction-kpi"><span>' + integrity.comparableCount + ' / ' + integrity.initiativeCount + '</span><small>iniciativas comparáveis</small></div>'
+          + '<div class="inaction-kpi"><span>' + integrity.inconclusiveCount + '</span><small>sem conclusão suficiente</small></div>'
+          + '<div class="inaction-kpi"><span>' + integrity.businessMetricChecks.filter((check) => check.status === 'measured').length + ' / ' + integrity.businessMetricChecks.length + '</span><small>checagens de métrica mensuradas</small></div>'
+          + '<div class="inaction-kpi"><span>' + integrity.billingCoverageChecks.filter((check) => check.status === 'covered').length + ' / ' + integrity.billingCoverageChecks.length + '</span><small>checagens de escopo/mês cobertas</small></div>'
+          + '</div>'
+          + '<p class="muted">Contagens de evidências disponíveis, sem score de confiança sintético. Cobertura confirma que o escopo e o mês foram consultados; não significa que houve cobrança no recurso.</p>'
+          + '<details><summary>Ver qualidade dos dados de negócio e faturamento</summary>'
+          + '<h4>Métricas de negócio por iniciativa e período</h4>'
+          + (metricChecks
+            ? '<div class="table-scroll"><table><thead><tr><th>Iniciativa</th><th>Lado</th><th>Mês</th><th>Estado da métrica</th></tr></thead><tbody>' + metricChecks + '</tbody></table></div>'
+            : '<p class="muted">Nenhum período de negócio corresponde às iniciativas registradas.</p>')
+          + '<h4>Cobertura de faturamento por assinatura e mês</h4>'
+          + (billingChecks
+            ? '<div class="table-scroll"><table><thead><tr><th>Iniciativa</th><th>Lado</th><th>Mês</th><th>Assinatura</th><th>Cobertura</th></tr></thead><tbody>' + billingChecks + '</tbody></table></div>'
+            : '<p class="muted">Nenhuma checagem de cobertura pôde ser feita sem período de negócio correspondente.</p>')
+          + '</details>'
+          + '<p class="muted">Último mês fechado: ' + esc(data.latestSettledMonth || 'indisponível')
           + '. Valores com sinal positivo em “redução” indicam queda observada; aumento no destino permanece incluído no custo total.</p>'
           + data.limitations.map((text) => '<p class="muted">' + esc(text) + '</p>').join('')
           + '<div class="table-scroll"><table><thead><tr><th>Iniciativa</th><th>Resultado observado</th><th>Origem (IDs de cobrança)</th><th>Destino (IDs de cobrança)</th><th>Antes: custo e volume</th><th>Depois: custo e volume</th><th>Δ custo/unit</th><th>Redução na origem</th><th>Variação no destino</th><th>Redução líquida</th><th>Leitura</th></tr></thead><tbody>'

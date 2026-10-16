@@ -440,6 +440,8 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 
 O painel mostra custo e volume antes/depois, variação de custo por unidade, queda na origem, aumento no destino e redução líquida das unidades declaradas. `appliedMonth` é excluído da comparação: a linha de base é o último mês fechado anterior e a medição usa o mês fechado mais recente posterior. Use IDs de cobrança completos e inclua todas as unidades de origem/destino; o relatório não infere dependências nem custos indiretos. Se cobertura, moeda, volume ou linha de base forem insuficientes, a iniciativa aparece sem conclusão mensurável. Uma melhora posterior é evidência observacional — sazonalidade e outras mudanças podem influenciar — e não prova causalidade nem redução garantida do pagamento.
 
+O painel também inclui **Integridade da Evidência**: contagens explícitas de iniciativas comparáveis e inconclusivas, estados das métricas de negócio e cobertura mensal de Cost Management por assinatura. Abra o detalhamento para identificar qual período ou escopo está faltando. As contagens são evidências disponíveis, não uma nota de confiança; “mês coberto” confirma a consulta ao escopo, não que um recurso teve cobrança.
+
 #### FinOps Maturity Score
 
 Uma nota única de 0 a 100 (com conceito de A a E) que resume, com pesos fixos e documentados, quatro dimensões já validadas no restante do relatório — nenhum número novo é criado, apenas uma média ponderada transparente:

@@ -398,6 +398,8 @@ describe('CLI command classes', () => {
     expect(html).toContain('"initiativeLedger"');
     expect(html).toContain('"status":"improved"');
     expect(html).toContain('"netSpendReduction":100');
+    expect(html).toContain('"evidenceIntegrity"');
+    expect(html).toContain('"comparableCount":1');
     expect(html).toContain('Ledger de Iniciativas');
   });
 
