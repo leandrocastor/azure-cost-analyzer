@@ -9,6 +9,7 @@ import type {
   ExecutiveSummary,
   FinOpsMaturityScore,
   ForgottenEnvironmentReport,
+  FinOpsInitiativeLedger,
   GovernanceReport,
   IdleResource,
   InactionCost,
@@ -38,6 +39,7 @@ export type StaticReportData = {
   decisionEngine?: DecisionEngineReport | undefined;
   cashCapture?: CashCapturePlan;
   businessOutcomeLedger?: BusinessOutcomeLedger | undefined;
+  initiativeLedger?: FinOpsInitiativeLedger | undefined;
   aging?: AgingReport | undefined;
   forgottenEnvironments?: ForgottenEnvironmentReport | undefined;
   governance?: GovernanceReport | undefined;
@@ -651,6 +653,68 @@ export const REPORT_CLIENT_SCRIPT = `
           + table;
       }
 
+      function renderInitiativeLedger() {
+        const data = REPORT.initiativeLedger;
+        if (!data || !data.items.length) return;
+        document.getElementById('initiative-ledger-section').hidden = false;
+        const money = (value, currency) => {
+          if (value == null) return '—';
+          try {
+            return new Intl.NumberFormat('pt-BR', {
+              style: 'currency',
+              currency,
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            }).format(value);
+          } catch (err) {
+            return esc(currency) + ' ' + Number(value).toLocaleString('pt-BR', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            });
+          }
+        };
+        const labels = {
+          improved: 'Custo/unit melhorou',
+          regressed: 'Custo/unit piorou',
+          unchanged: 'Sem variação',
+          awaiting_post_period: 'Aguardando mês posterior',
+          baseline_unavailable: 'Sem linha de base',
+          business_metrics_unavailable: 'Métrica indisponível',
+          billing_unavailable: 'Cobertura de cobrança incompleta',
+          currency_mismatch: 'Moedas incompatíveis',
+          no_baseline_spend: 'Sem custo-base',
+          billing_adjustment: 'Crédito/ajuste impede conclusão',
+        };
+        const rows = data.items.map(function (item) {
+          const initiative = item.initiative;
+          const resources = (ids) => ids.length
+            ? ids.map((id) => '<code>' + esc(id) + '</code>').join('<br>')
+            : '—';
+          return '<tr>'
+            + '<td><strong>' + esc(initiative.id) + '</strong><div class="muted">' + esc(initiative.description) + '</div>'
+            + '<div class="muted">Aplicada em: ' + esc(initiative.appliedMonth) + ' · ' + esc(initiative.tagKey) + '=' + esc(initiative.tagValue) + ' / ' + esc(initiative.unit) + '</div>'
+            + (initiative.recommendationId ? '<div class="muted">Recomendação: ' + esc(initiative.recommendationId) + '</div>' : '') + '</td>'
+            + '<td>' + esc(labels[item.status] || item.status) + '</td>'
+            + '<td>' + resources(initiative.sourceResourceIds) + '</td>'
+            + '<td>' + resources(initiative.destinationResourceIds) + '</td>'
+            + '<td>' + (item.baselineMonth ? esc(item.baselineMonth) + '<br>' + money(item.baselineTotalSpend, item.currency) + '<br><span class="muted">'
+              + Number(item.baselineVolume).toLocaleString('pt-BR') + ' ' + esc(initiative.unit) + ' · ' + money(item.baselineCostPerUnit, item.currency) + '/un.</span>' : '—') + '</td>'
+            + '<td>' + (item.observedMonth ? esc(item.observedMonth) + '<br>' + money(item.observedTotalSpend, item.currency) + '<br><span class="muted">'
+              + Number(item.observedVolume).toLocaleString('pt-BR') + ' ' + esc(initiative.unit) + ' · ' + money(item.observedCostPerUnit, item.currency) + '/un.</span>' : '—') + '</td>'
+            + '<td>' + (item.costPerUnitChangePercent == null ? '—' : (item.costPerUnitChangePercent > 0 ? '+' : '') + item.costPerUnitChangePercent.toFixed(2) + '%') + '</td>'
+            + '<td>' + money(item.sourceSpendReduction, item.currency) + '</td>'
+            + '<td>' + money(item.destinationSpendChange, item.currency) + '</td>'
+            + '<td>' + money(item.netSpendReduction, item.currency) + '</td>'
+            + '<td class="muted">' + esc(item.explanation) + '</td></tr>';
+        }).join('');
+        document.getElementById('initiative-ledger-body').innerHTML =
+          '<p class="muted">Último mês fechado: ' + esc(data.latestSettledMonth || 'indisponível')
+          + '. Valores com sinal positivo em “redução” indicam queda observada; aumento no destino permanece incluído no custo total.</p>'
+          + data.limitations.map((text) => '<p class="muted">' + esc(text) + '</p>').join('')
+          + '<div class="table-scroll"><table><thead><tr><th>Iniciativa</th><th>Resultado observado</th><th>Origem (IDs de cobrança)</th><th>Destino (IDs de cobrança)</th><th>Antes: custo e volume</th><th>Depois: custo e volume</th><th>Δ custo/unit</th><th>Redução na origem</th><th>Variação no destino</th><th>Redução líquida</th><th>Leitura</th></tr></thead><tbody>'
+          + rows + '</tbody></table></div>';
+      }
+
       /**
        * Renders the audit trail of a finding. Showing the measurements and the price
        * basis is what lets a reader challenge or accept the number.
@@ -950,6 +1014,7 @@ export const REPORT_CLIENT_SCRIPT = `
       renderBusinessOutcomeLedger();
       renderWaf();
       renderSavingsRealization();
+      renderInitiativeLedger();
       renderInaction();
       renderDiff();
       renderOwnership();
@@ -1000,6 +1065,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
       data.recommendations, data.idleResources, data.generatedAt, data.costs.currency,
     ),
     businessOutcomeLedger: data.businessOutcomeLedger ?? null,
+    initiativeLedger: data.initiativeLedger ?? null,
     aging: data.aging ?? null,
     forgottenEnvironments: data.forgottenEnvironments ?? null,
     governance: data.governance ?? null,
@@ -1477,6 +1543,14 @@ export const generateStaticReport = (data: StaticReportData): string => {
         <div class="card">
           <p class="section-hint">Acompanha recursos resolvidos e compara o custo faturado por recurso entre meses fechados. O valor só é confirmado quando há redução real na fatura; isso comprova a variação, não a causalidade da ação.</p>
           <div id="value-ledger-body"></div>
+        </div>
+      </section>
+
+      <section id="initiative-ledger-section" hidden>
+        <h2>Ledger de Iniciativas · Resultado após a mudança</h2>
+        <div class="card">
+          <p class="section-hint">Acompanha ações registradas e compara custo faturado nas unidades de cobrança de origem e destino, normalizado pelo volume de negócio. Uma associação temporal não prova causalidade.</p>
+          <div id="initiative-ledger-body"></div>
         </div>
       </section>
 

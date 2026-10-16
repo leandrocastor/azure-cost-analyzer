@@ -172,6 +172,7 @@ Without `--subscription`, every enabled subscription visible to the authenticate
 | `--subscription`, `-s` | Restrict the analysis to a single subscription |
 | `--compare`, `-c` | Path to a previous report (HTML or JSON) to diff against |
 | `--owner-tags` | Comma-separated tag keys used to attribute waste to an owner |
+| `--initiatives` | Optional JSON manifest of applied initiatives; requires `--business-metrics` |
 | `--no-remediation` | Skip the remediation plan and the `apply-remediation.sh` script |
 | `--currency` | Currency used for list price lookups (defaults to the subscription billing currency) |
 
@@ -400,6 +401,44 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 The new panel shows cost per order/unit, bill growth versus business-volume growth, and an **efficiency gap**: how much current-month cost exceeded the previous month's unit-cost baseline at the current volume. This is a signal to investigate, **not** a savings promise or proof of causality. Unclosed months, missing tag costs, zero volume, negative net amounts and mixed currencies remain explicit instead of becoming invalid ratios or comparisons.
 
 The CSV must contain exactly `period` (`YYYY-MM`), `tag_key`, `tag_value`, `unit`, and `quantity`; `quantity` must be a non-negative number and each month/tag/unit combination must be unique. Tag values are matched exactly; business volume must cover the same subscriptions and cost scope being analyzed. The `--period` window must include two consecutive closed months; the CLI rejects shorter windows instead of generating a report without a comparison. One additional Cost Management query is made per distinct tag key and subscription; cost-read access is required across all subscriptions in the report. Comparisons use `PreTaxCost` and only calculate unit costs for conservatively closed months with a seven-day buffer; taxes, currency conversion and the source of business volume are not inferred. Without `--business-metrics`, the existing command and report are unchanged.
+
+#### FinOps Initiative Ledger
+
+To follow an optimization after it is applied, record the change in a JSON manifest. The ledger compares the declared billing units before and after the change, includes any cost that appeared at the destination, and normalizes the total by the operational volume already supplied through `--business-metrics`:
+
+```json
+{
+  "initiatives": [
+    {
+      "id": "resize-checkout",
+      "appliedMonth": "2026-07",
+      "description": "Move workload to right-sized capacity",
+      "recommendationId": "rec-42",
+      "sourceResourceIds": [
+        "/subscriptions/<subscription-id>/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-old"
+      ],
+      "destinationResourceIds": [
+        "/subscriptions/<subscription-id>/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-new"
+      ],
+      "tagKey": "app",
+      "tagValue": "checkout",
+      "unit": "orders"
+    }
+  ]
+}
+```
+
+Run `export` with the same monthly business data and the manifest. The analysis queries monthly per-resource costs for the referenced subscriptions:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 6 \
+  --business-metrics "./business-metrics.csv" \
+  --initiatives "./finops-initiatives.json" \
+  --output "./azure-cost-report.html"
+```
+
+The panel shows cost and volume before/after, cost-per-unit change, source reduction, destination increase, and net reduction across the declared units. `appliedMonth` is excluded from the comparison: the baseline is the last closed month before it, and the measurement uses the latest closed month after it. Use full billing resource IDs and include every source/destination unit; the report does not infer dependencies or indirect costs. If coverage, currency, volume, or baseline evidence is insufficient, the initiative remains explicitly unmeasured. An improvement observed afterward is observational evidence — seasonality and other changes may influence it — not proof of causality or guaranteed payment reduction.
 
 #### FinOps Maturity Score
 

@@ -97,6 +97,7 @@ const reportOutputPath = path.resolve(__dirname, '../fixtures/report-command-out
 const previousReportPath = path.resolve(__dirname, '../fixtures/previous-report-command-output.html');
 const remediationScriptPath = path.resolve(__dirname, '../fixtures/apply-remediation.sh');
 const businessMetricsPath = path.resolve(__dirname, '../fixtures/business-metrics-command-input.csv');
+const initiativesPath = path.resolve(__dirname, '../fixtures/initiative-ledger-command-input.json');
 
 describe('CLI command classes', () => {
   beforeEach(() => {
@@ -157,6 +158,7 @@ describe('CLI command classes', () => {
       unlinkSync(previousReportPath);
     }
     if (existsSync(businessMetricsPath)) unlinkSync(businessMetricsPath);
+    if (existsSync(initiativesPath)) unlinkSync(initiativesPath);
   });
 
   afterAll(() => {
@@ -173,6 +175,7 @@ describe('CLI command classes', () => {
       unlinkSync(previousReportPath);
     }
     if (existsSync(businessMetricsPath)) unlinkSync(businessMetricsPath);
+    if (existsSync(initiativesPath)) unlinkSync(initiativesPath);
   });
 
   it('renders costs in table format', async () => {
@@ -336,12 +339,93 @@ describe('CLI command classes', () => {
     expect(html).toContain('Eficiência de Custo por Resultado');
   });
 
+  it('queries per-resource billing for registered initiatives and embeds their outcome ledger', async () => {
+    const monthAtOffset = (offset: number): string => {
+      const date = new Date();
+      date.setUTCDate(1);
+      date.setUTCMonth(date.getUTCMonth() - offset);
+      return date.toISOString().slice(0, 7);
+    };
+    const now = new Date();
+    const settledMonth = monthAtOffset(now.getUTCDate() <= 7 ? 2 : 1);
+    const appliedMonth = monthAtOffset(3);
+    const baselineMonth = monthAtOffset(4);
+    const sourceId = '/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/old';
+    const destinationId = '/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/new';
+    writeFileSync(businessMetricsPath, [
+      'period,tag_key,tag_value,unit,quantity',
+      `${baselineMonth},app,checkout,orders,100`,
+      `${settledMonth},app,checkout,orders,120`,
+    ].join('\n'));
+    writeFileSync(initiativesPath, JSON.stringify({ initiatives: [{
+      id: 'move-checkout',
+      appliedMonth,
+      description: 'Move checkout workload',
+      recommendationId: 'rec-42',
+      sourceResourceIds: [sourceId],
+      destinationResourceIds: [destinationId],
+      tagKey: 'app',
+      tagValue: 'checkout',
+      unit: 'orders',
+    }] }));
+    resourceDetectorMock.detectAll.mockResolvedValueOnce([]);
+    costAnalyzerMock.queryCostsByTag.mockResolvedValueOnce([
+      { period: baselineMonth, tagValue: 'checkout', amount: 500, currency: 'USD' },
+      { period: settledMonth, tagValue: 'checkout', amount: 700, currency: 'USD' },
+    ]);
+    costAnalyzerMock.queryResourceCosts.mockResolvedValueOnce({
+      currency: 'USD',
+      months: [baselineMonth, settledMonth],
+      coveredMonths: [baselineMonth, settledMonth],
+      resources: {
+        [sourceId.toLowerCase()]: { [baselineMonth]: 200, [settledMonth]: 0 },
+        [destinationId.toLowerCase()]: { [baselineMonth]: 0, [settledMonth]: 100 },
+      },
+    });
+
+    await ExportCommand.run([
+      '--output', reportOutputPath,
+      '--subscription', 'sub-a',
+      '--period', '6',
+      '--business-metrics', businessMetricsPath,
+      '--initiatives', initiativesPath,
+    ]);
+
+    expect(costAnalyzerMock.queryResourceCosts).toHaveBeenCalledWith(
+      'sub-a', expect.any(String), expect.any(String),
+    );
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('"initiativeLedger"');
+    expect(html).toContain('"status":"improved"');
+    expect(html).toContain('"netSpendReduction":100');
+    expect(html).toContain('Ledger de Iniciativas');
+  });
+
   it('rejects an invalid business metrics CSV before contacting Azure', async () => {
     writeFileSync(businessMetricsPath, 'period,tag_key,tag_value,unit,quantity\n2026-09,app,checkout,orders,-1');
     await expect(ExportCommand.run([
       '--output', reportOutputPath,
       '--business-metrics', businessMetricsPath,
     ])).rejects.toThrow('CSV line 2: invalid month, tag, unit, or non-negative numeric quantity.');
+    expect(azureClientMock.listAccessibleSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it('requires business metrics for an initiative manifest before contacting Azure', async () => {
+    writeFileSync(initiativesPath, JSON.stringify({ initiatives: [{
+      id: 'resize-api',
+      appliedMonth: '2026-07',
+      description: 'Move API workload',
+      sourceResourceIds: ['/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/old'],
+      destinationResourceIds: ['/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/new'],
+      tagKey: 'app',
+      tagValue: 'api',
+      unit: 'requests',
+    }] }));
+
+    await expect(ExportCommand.run([
+      '--output', reportOutputPath,
+      '--initiatives', initiativesPath,
+    ])).rejects.toThrow('--initiatives requires --business-metrics');
     expect(azureClientMock.listAccessibleSubscriptions).not.toHaveBeenCalled();
   });
 

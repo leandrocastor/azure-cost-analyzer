@@ -629,6 +629,72 @@ export const BusinessOutcomeLedgerSchema = z.object({
   limitations: z.array(z.string().min(1)),
 });
 
+export const FinOpsInitiativeInputSchema = z.object({
+  id: z.string().trim().min(1),
+  appliedMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  description: z.string().trim().min(1),
+  recommendationId: z.string().trim().min(1).optional(),
+  sourceResourceIds: z.array(z.string().trim().min(1)),
+  destinationResourceIds: z.array(z.string().trim().min(1)),
+  tagKey: z.string().trim().min(1),
+  tagValue: z.string().trim().min(1),
+  unit: z.string().trim().min(1),
+}).superRefine((initiative, context) => {
+  if (initiative.sourceResourceIds.length === 0 && initiative.destinationResourceIds.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'An initiative must identify at least one source or destination billing resource ID.',
+    });
+  }
+  const allIds = [...initiative.sourceResourceIds, ...initiative.destinationResourceIds];
+  if (new Set(allIds.map((id) => id.toLowerCase())).size !== allIds.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Resource IDs must be unique across initiative source and destination.',
+    });
+  }
+});
+
+export const FinOpsInitiativeLedgerItemSchema = z.object({
+  initiative: FinOpsInitiativeInputSchema,
+  status: z.enum([
+    'improved',
+    'regressed',
+    'unchanged',
+    'awaiting_post_period',
+    'baseline_unavailable',
+    'business_metrics_unavailable',
+    'billing_unavailable',
+    'currency_mismatch',
+    'no_baseline_spend',
+    'billing_adjustment',
+  ]),
+  baselineMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  observedMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+  currency: z.string().min(1).optional(),
+  baselineSourceSpend: costAmount.optional(),
+  observedSourceSpend: costAmount.optional(),
+  baselineDestinationSpend: costAmount.optional(),
+  observedDestinationSpend: costAmount.optional(),
+  baselineTotalSpend: costAmount.optional(),
+  observedTotalSpend: costAmount.optional(),
+  baselineVolume: nonNegativeNumber.optional(),
+  observedVolume: nonNegativeNumber.optional(),
+  baselineCostPerUnit: nonNegativeNumber.optional(),
+  observedCostPerUnit: nonNegativeNumber.optional(),
+  costPerUnitChangePercent: z.number().finite().optional(),
+  sourceSpendReduction: z.number().finite().optional(),
+  destinationSpendChange: z.number().finite().optional(),
+  netSpendReduction: z.number().finite().optional(),
+  explanation: z.string().min(1),
+});
+
+export const FinOpsInitiativeLedgerSchema = z.object({
+  latestSettledMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  items: z.array(FinOpsInitiativeLedgerItemSchema),
+  limitations: z.array(z.string().min(1)),
+});
+
 /**
  * A single weighted dimension of the FinOps maturity score, each backed by a
  * metric already computed elsewhere in the report (WAF, ownership tagging,
@@ -697,5 +763,8 @@ export type UnitEconomicsReport = z.infer<typeof UnitEconomicsReportSchema>;
 export type BusinessMetricInput = z.infer<typeof BusinessMetricInputSchema>;
 export type BusinessOutcomeObservation = z.infer<typeof BusinessOutcomeObservationSchema>;
 export type BusinessOutcomeLedger = z.infer<typeof BusinessOutcomeLedgerSchema>;
+export type FinOpsInitiativeInput = z.infer<typeof FinOpsInitiativeInputSchema>;
+export type FinOpsInitiativeLedgerItem = z.infer<typeof FinOpsInitiativeLedgerItemSchema>;
+export type FinOpsInitiativeLedger = z.infer<typeof FinOpsInitiativeLedgerSchema>;
 export type MaturityDimension = z.infer<typeof MaturityDimensionSchema>;
 export type FinOpsMaturityScore = z.infer<typeof FinOpsMaturityScoreSchema>;
