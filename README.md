@@ -172,6 +172,7 @@ Sem `--subscription`, todas as assinaturas habilitadas visíveis à identidade a
 | `--subscription`, `-s` | Restringe a análise a uma única assinatura |
 | `--compare`, `-c` | Caminho de um relatório anterior (HTML ou JSON) para gerar o comparativo |
 | `--owner-tags` | Tags usadas para atribuir o desperdício a um responsável, separadas por vírgula |
+| `--initiatives` | Manifesto JSON opcional de iniciativas aplicadas; exige `--business-metrics` |
 | `--no-remediation` | Não gera o plano de remediação nem o script `apply-remediation.sh` |
 | `--currency` | Moeda usada na consulta de preços de lista (padrão: a moeda de faturamento da assinatura) |
 
@@ -400,6 +401,46 @@ npx --yes github:leandrocastor/azure-cost-analyzer export \
 O novo painel mostra custo por pedido/unidade, crescimento da fatura versus crescimento do volume e o **gap de eficiência**: quanto o custo do mês excedeu a linha-base do custo unitário do mês anterior para o volume atual. É um sinal para investigar, **não** uma promessa de economia ou prova de causalidade. Meses ainda não fechados, ausência de custo da tag, volume zero, valores líquidos negativos e moedas diferentes ficam explícitos, nunca viram divisão ou comparação inválida.
 
 O CSV deve conter exatamente `period` (`YYYY-MM`), `tag_key`, `tag_value`, `unit` e `quantity`; `quantity` deve ser número não negativo e cada combinação mês/tag/unidade deve ser única. Valores de tag são comparados exatamente; o volume precisa cobrir as mesmas assinaturas e o mesmo escopo de custos analisados. A janela de `--period` precisa incluir dois meses fechados consecutivos; o CLI rejeita janelas curtas em vez de gerar um relatório sem comparação. São feitas consultas adicionais do Cost Management por tag distinta e assinatura; é necessário ter permissão de leitura de custos em todas as assinaturas do relatório. A comparação usa `PreTaxCost` e só calcula custo unitário em meses fechados com uma janela conservadora de sete dias; impostos, câmbio e origem do volume não são inferidos. Sem `--business-metrics`, o comando e relatório existentes não mudam.
+
+#### Ledger de Iniciativas FinOps
+
+Para acompanhar o resultado depois de executar uma otimização, registre a mudança em um manifesto JSON. O ledger compara as unidades de cobrança declaradas antes e depois, inclui o custo que apareceu no destino e divide o total pelo volume operacional já informado em `--business-metrics`:
+
+```json
+{
+  "initiatives": [
+    {
+      "id": "resize-checkout",
+      "appliedMonth": "2026-07",
+      "description": "Migração para capacidade ajustada",
+      "recommendationId": "rec-42",
+      "sourceResourceIds": [
+        "/subscriptions/<subscription-id>/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-old"
+      ],
+      "destinationResourceIds": [
+        "/subscriptions/<subscription-id>/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-new"
+      ],
+      "tagKey": "app",
+      "tagValue": "checkout",
+      "unit": "pedidos"
+    }
+  ]
+}
+```
+
+Execute `export` com os mesmos dados mensais de negócio e o manifesto. A análise consulta custos mensais por recurso nas assinaturas citadas:
+
+```bash
+npx --yes github:leandrocastor/azure-cost-analyzer export \
+  --period 6 \
+  --business-metrics "./business-metrics.csv" \
+  --initiatives "./finops-initiatives.json" \
+  --output "./azure-cost-report.html"
+```
+
+O painel mostra custo e volume antes/depois, variação de custo por unidade, queda na origem, aumento no destino e redução líquida das unidades declaradas. `appliedMonth` é excluído da comparação: a linha de base é o último mês fechado anterior e a medição usa o mês fechado mais recente posterior. Use IDs de cobrança completos e inclua todas as unidades de origem/destino; o relatório não infere dependências nem custos indiretos. Se cobertura, moeda, volume ou linha de base forem insuficientes, a iniciativa aparece sem conclusão mensurável. Uma melhora posterior é evidência observacional — sazonalidade e outras mudanças podem influenciar — e não prova causalidade nem redução garantida do pagamento.
+
+O painel também inclui **Integridade da Evidência**: contagens explícitas de iniciativas comparáveis e inconclusivas, estados das métricas de negócio e cobertura mensal de Cost Management por assinatura. Abra o detalhamento para identificar qual período ou escopo está faltando. As contagens são evidências disponíveis, não uma nota de confiança; “mês coberto” confirma a consulta ao escopo, não que um recurso teve cobrança.
 
 #### FinOps Maturity Score
 

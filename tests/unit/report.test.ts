@@ -153,6 +153,85 @@ describe('generateStaticReport', () => {
     expect(rendered).toContain('&lt;/script&gt;&lt;img');
     expect(rendered).not.toContain('<img');
   });
+
+  it('renders initiative source/destination evidence and escapes untrusted descriptions', () => {
+    const html = generateStaticReport({
+      ...baseData,
+      initiativeLedger: {
+        latestSettledMonth: '2026-09',
+        evidenceIntegrity: {
+          initiativeCount: 1,
+          comparableCount: 1,
+          inconclusiveCount: 0,
+          businessMetricChecks: [
+            { initiativeId: 'move-api', side: 'baseline', period: '2026-06', status: 'measured' },
+            { initiativeId: 'move-api', side: 'post', period: '2026-09', status: 'measured' },
+          ],
+          billingCoverageChecks: [
+            { initiativeId: 'move-api', period: '2026-06', side: 'baseline', subscriptionId: 'sub-a', status: 'covered' },
+            { initiativeId: 'move-api', period: '2026-09', side: 'post', subscriptionId: 'sub-a', status: 'covered' },
+          ],
+        },
+        limitations: ['Medição observacional.'],
+        items: [{
+          initiative: {
+            id: 'move-api',
+            appliedMonth: '2026-07',
+            description: '</td><img src=x onerror=alert(1)>',
+            recommendationId: 'rec-1',
+            sourceResourceIds: ['/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/old'],
+            destinationResourceIds: ['/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/new'],
+            tagKey: 'app',
+            tagValue: 'api',
+            unit: 'requests',
+          },
+          status: 'improved',
+          baselineMonth: '2026-06',
+          observedMonth: '2026-09',
+          currency: 'USD',
+          baselineSourceSpend: 100,
+          observedSourceSpend: 0,
+          baselineDestinationSpend: 0,
+          observedDestinationSpend: 40,
+          baselineTotalSpend: 100,
+          observedTotalSpend: 40,
+          baselineVolume: 1000,
+          observedVolume: 2000,
+          baselineCostPerUnit: 0.1,
+          observedCostPerUnit: 0.02,
+          costPerUnitChangePercent: -80,
+          sourceSpendReduction: 100,
+          destinationSpendChange: 40,
+          netSpendReduction: 60,
+          explanation: 'Custo por request diminuiu após a iniciativa; não atribuída causalmente a ela.',
+        }],
+      },
+    });
+    expect(html).not.toContain('</td><img src=x onerror=alert(1)>');
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    expect(embedded).not.toBeNull();
+    type ElementStub = { textContent: string; innerHTML: string; hidden: boolean; value: string };
+    const elements = new Map<string, ElementStub>();
+    const getElementById = (id: string): ElementStub => {
+      if (!elements.has(id)) elements.set(id, {
+        textContent: id === 'report-data' ? embedded![1]! : '',
+        innerHTML: '', hidden: true, value: id === 'idle-sort' ? 'idleScore-desc' : '',
+      });
+      return elements.get(id)!;
+    };
+    new Script(REPORT_CLIENT_SCRIPT).runInNewContext({ document: { getElementById }, Intl });
+    const rendered = getElementById('initiative-ledger-body').innerHTML;
+    expect(getElementById('initiative-ledger-section').hidden).toBe(false);
+    expect(rendered).toContain('Custo/unit melhorou');
+    expect(rendered).toContain('Integridade da evidência');
+    expect(rendered).toContain('2 / 2');
+    expect(rendered).toContain('Métricas de negócio por iniciativa');
+    expect(rendered).toContain('Mês coberto pela consulta');
+    expect(rendered).toContain('US$');
+    expect(rendered).toContain('requests');
+    expect(rendered).toContain('&lt;/td&gt;&lt;img');
+    expect(rendered).not.toContain('<img');
+  });
 });
 
 describe('generateStaticReport — seções de diferenciação', () => {

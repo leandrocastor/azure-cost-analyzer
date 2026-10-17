@@ -10,6 +10,7 @@ import type {
   CostDiff,
   CostEntry,
   CostSummary,
+  FinOpsInitiativeInput,
   IdleResource,
   InactionCost,
   Resource,
@@ -21,6 +22,7 @@ import type { ResourceCostLedger } from '@/services/cost-analyzer';
 import { CostReconciliationService } from '@/services/cost-reconciliation';
 import { CashCaptureService } from '@/services/cash-capture';
 import { BusinessOutcomeLedgerService } from '@/services/business-outcome-ledger';
+import { InitiativeLedgerService } from '@/services/initiative-ledger';
 import type { ReportSnapshot } from '@/services/cost-diff';
 import { CostDiffService } from '@/services/cost-diff';
 import { SavingsRealizationService } from '@/services/savings-realization';
@@ -165,6 +167,10 @@ export default class ExportCommand extends Command {
       description:
         'Optional CSV with monthly business volume (period,tag_key,tag_value,unit,quantity); --period must cover two closed months.',
     }),
+    initiatives: Flags.string({
+      description:
+        'Optional JSON initiative manifest. Requires --business-metrics and tracks billed source/destination resource IDs per business unit.',
+    }),
     currency: Flags.string({
       description: 'Currency for retail price lookups (ISO code, e.g. BRL). Defaults to the billing currency reported by Azure.',
     }),
@@ -183,6 +189,13 @@ export default class ExportCommand extends Command {
     const businessMetrics: BusinessMetricInput[] | undefined = flags['business-metrics']
       ? businessOutcomeService.parseCsv(await readFile(path.resolve(flags['business-metrics']), 'utf8'))
       : undefined;
+    const initiativeService = new InitiativeLedgerService();
+    const initiatives: FinOpsInitiativeInput[] | undefined = flags.initiatives
+      ? initiativeService.parseJson(await readFile(path.resolve(flags.initiatives), 'utf8'))
+      : undefined;
+    if (initiatives && !businessMetrics) {
+      throw new Error('--initiatives requires --business-metrics so the result can be normalized by business volume.');
+    }
     const endDate = new Date();
     const startDate = new Date(
       Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth() - (flags.period - 1), 1),
@@ -251,6 +264,10 @@ export default class ExportCommand extends Command {
         let analyzed = false;
         let subscriptionCostSucceeded = false;
         let subscriptionBillingCurrency: string | undefined;
+        const hasInitiativeResources = Boolean(initiatives?.some((initiative) =>
+          [...initiative.sourceResourceIds, ...initiative.destinationResourceIds]
+            .some((id) => subscriptionIdFromResourceId(id) === subscription.id.toLowerCase()),
+        ));
 
         // Requests are issued sequentially rather than in parallel: Azure Cost
         // Management and Monitor throttle aggressively, and bursting across several
@@ -329,7 +346,7 @@ export default class ExportCommand extends Command {
           ) ?? [];
         if (
           subscriptionCostSucceeded &&
-          (subscriptionFindings.length > 0 || previousFindingsForSubscription.length > 0)
+          (subscriptionFindings.length > 0 || previousFindingsForSubscription.length > 0 || hasInitiativeResources)
         ) {
           spinner.text = `Fetching billed cost per resource for ${progress}`;
           try {
@@ -419,6 +436,9 @@ export default class ExportCommand extends Command {
       const generatedAt = new Date().toISOString();
       const businessOutcomeLedger = businessMetrics
         ? businessOutcomeService.build(businessMetrics, taggedCostsBySubscription, generatedAt)
+        : undefined;
+      const initiativeLedger = initiatives && businessOutcomeLedger
+        ? initiativeService.build(initiatives, businessOutcomeLedger, resourceLedgersBySubscription, generatedAt)
         : undefined;
 
       const ownerTagKeys = flags['owner-tags']
@@ -539,6 +559,7 @@ export default class ExportCommand extends Command {
         decisionEngine,
         cashCapture,
         businessOutcomeLedger,
+        initiativeLedger,
         aging,
         forgottenEnvironments,
         governance,
