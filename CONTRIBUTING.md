@@ -27,6 +27,10 @@ to resolve `@/` aliases in JavaScript and declaration files during emission.
 Use `npm run build`, not plain `tsc`, to produce runnable artifacts. Keep both
 transformer entries in `tsconfig.json`; `npm run typecheck` remains a no-emit check.
 
+The targeted `minimatch` override replaces vulnerable versions 7 through 11.0.0 with
+11.0.5 or newer while leaving legacy v3 consumers unchanged. Recheck the CLI,
+lint and transformer build when updating its consumers or removing the override.
+
 ## Testing requirements
 
 - Keep all tests self-contained and mock every Azure SDK call.
