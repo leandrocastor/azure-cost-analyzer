@@ -1,7 +1,7 @@
 {
   "name": "azure-cost-analyzer",
   "version": "1.0.0",
-  "description": "Enterprise-grade Azure Cost Analyzer CLI and dashboard",
+  "description": "Offline Azure FOCUS billing investigations with source evidence, plus live Azure cost analysis",
   "license": "MIT",
   "type": "commonjs",
   "main": "dist/cli/index.js",

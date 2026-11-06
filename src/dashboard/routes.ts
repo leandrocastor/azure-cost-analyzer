@@ -55,7 +55,9 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
 
   router.get('/api/resources/idle', async (_request, response, next) => {
     try {
-      response.json(await dependencies.resourceDetector.detectAll());
+      const idleResources = await dependencies.resourceDetector.detectAll();
+      response.set('X-Analysis-Partial', String((dependencies.resourceDetector.getDetectionWarnings?.() ?? []).length > 0));
+      response.json(idleResources);
     } catch (error: unknown) {
       next(error);
     }
@@ -64,6 +66,7 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
   router.get('/api/recommendations', async (_request, response, next) => {
     try {
       const idleResources = await dependencies.resourceDetector.detectAll();
+      response.set('X-Analysis-Partial', String((dependencies.resourceDetector.getDetectionWarnings?.() ?? []).length > 0));
       response.json(await dependencies.optimizer.generateRecommendations(idleResources));
     } catch (error: unknown) {
       next(error);
@@ -83,6 +86,7 @@ export const createDashboardRouter = (dependencies: DashboardDependencies): Rout
       ]);
       const recommendations = await dependencies.optimizer.generateRecommendations(idleResources);
       response.json({
+        warnings: dependencies.resourceDetector.getDetectionWarnings?.() ?? [],
         totalCost: costs.totalAmount,
         idleResourceCount: idleResources.length,
         recommendationCount: recommendations.length,

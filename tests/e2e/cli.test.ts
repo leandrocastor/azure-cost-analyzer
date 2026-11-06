@@ -3,12 +3,14 @@ const mocks = vi.hoisted(() => ({
   detectRun: vi.fn(async () => undefined),
   recommendRun: vi.fn(async () => undefined),
   dashboardRun: vi.fn(async () => undefined),
+  investigateRun: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/cli/commands/costs', () => ({ default: { run: mocks.costsRun } }));
 vi.mock('@/cli/commands/detect', () => ({ default: { run: mocks.detectRun } }));
 vi.mock('@/cli/commands/recommend', () => ({ default: { run: mocks.recommendRun } }));
 vi.mock('@/cli/commands/dashboard', () => ({ default: { run: mocks.dashboardRun } }));
+vi.mock('@/cli/commands/investigate', () => ({ default: { run: mocks.investigateRun } }));
 
 import { runCli } from '@/cli/index';
 
@@ -18,6 +20,7 @@ describe('CLI dispatcher', () => {
     mocks.detectRun.mockClear();
     mocks.recommendRun.mockClear();
     mocks.dashboardRun.mockClear();
+    mocks.investigateRun.mockClear();
   });
 
   it('prints help when no command is provided', async () => {
@@ -32,6 +35,7 @@ describe('CLI dispatcher', () => {
     ['detect', mocks.detectRun],
     ['recommend', mocks.recommendRun],
     ['dashboard', mocks.dashboardRun],
+    ['investigate', mocks.investigateRun],
   ])('dispatches %s command', async (command, spy) => {
     await runCli([command, '--flag']);
     expect(spy).toHaveBeenCalledWith(['--flag']);

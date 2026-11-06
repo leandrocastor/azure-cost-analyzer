@@ -15,12 +15,15 @@ import type {
   InactionCost,
   OwnershipReport,
   Recommendation,
+  Resource,
   RemediationPlan,
   SavingsRealization,
   UnitEconomicsReport,
   WafScorecard,
 } from '@/models';
 import { CashCaptureService } from '@/services/cash-capture';
+import { buildSpendWorklist } from '@/services/spend-worklist';
+import type { ResourceCostLedger } from '@/services/cost-analyzer';
 
 export type StaticReportData = {
   generatedAt: string;
@@ -46,6 +49,8 @@ export type StaticReportData = {
   unitEconomics?: UnitEconomicsReport | undefined;
   maturityScore?: FinOpsMaturityScore | undefined;
   anomalies?: CostAnomaly[];
+  resourceLedgers?: ResourceCostLedger[];
+  inventory?: Resource[];
 };
 
 
@@ -91,9 +96,12 @@ export const REPORT_CLIENT_SCRIPT = `
 
       const compactFormatter = currencyFormatter(0);
       const fullFormatter = currencyFormatter(2);
+      const smallFormatter = currencyFormatter(6);
 
       const fmt = (n) => typeof n === 'number' ? compactFormatter.format(n) : '—';
-      const fmtFull = (n) => typeof n === 'number' ? fullFormatter.format(n) : '—';
+      const fmtFull = (n) => typeof n === 'number' && Number.isFinite(n)
+        ? (n !== 0 && Math.abs(n) < 0.01 ? smallFormatter : fullFormatter).format(n)
+        : 'Não disponível';
 
       // Rótulos traduzidos para valores enumerados. Nomes de recursos, serviços e
       // demais dados vindos do Azure permanecem no idioma original.
@@ -212,11 +220,11 @@ export const REPORT_CLIENT_SCRIPT = `
         const entries = Object.entries(data).sort((a, b) => b[1] - a[1]);
         const max = entries[0][1] || 1;
         const bars = entries.map(([label, value]) => {
-          const pct = Math.round((value / max) * 100);
+          const pct = Math.max(0, Math.min(100, Math.round((value / max) * 100)));
           return '<div class="bar-row">'
             + '<div class="bar-label" title="' + esc(label) + '">' + esc(label) + '</div>'
             + '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div>'
-            + '<div class="bar-val">' + fmt(value) + '</div>'
+            + '<div class="bar-val">' + fmtFull(value) + '</div>'
             + '</div>';
         }).join('');
         container.innerHTML = bars;
@@ -249,6 +257,41 @@ export const REPORT_CLIENT_SCRIPT = `
         provavel: 'Provável (preço de lista)',
         'nao-confirmada': 'Não confirmada',
       };
+
+      function renderSpendWorklist() {
+          const data = REPORT.spendWorklist;
+          if (!data) return;
+          const container = document.getElementById('spend-worklist-body');
+          const services = data.services.map(function (item, index) {
+            return '<tr><td>' + (index + 1) + '. ' + esc(item.service) + '</td>'
+              + '<td>' + fmtFull(item.cost) + '</td>'
+              + '<td>' + (item.share == null ? 'Não calculável' : (item.share * 100).toFixed(1) + '%') + '</td>'
+              + '<td>' + esc(item.nextStep) + '</td></tr>';
+          }).join('');
+          const resources = data.resources.map(function (item) {
+            const monthly = Object.entries(item.monthly).sort().map(function (entry) {
+              return esc(entry[0]) + ': ' + fmtFull(entry[1]);
+            }).join('<br>');
+            return '<tr><td><strong>' + esc(item.name) + '</strong><br>' + esc(item.resourceGroup)
+              + '<details><summary>ID e evidência</summary><p>' + esc(item.id) + '</p>'
+              + '<p>' + (item.inventoryMatched ? 'Encontrado no inventário consultado.' : 'Somente na cobrança; pode estar excluído ou fora dos detectores. Não é prova de ociosidade.')
+              + '</p></details></td><td>' + fmtFull(item.cost) + '</td><td>' + monthly + '</td>'
+              + '<td>' + esc(item.owner) + '</td></tr>';
+          }).join('');
+          container.innerHTML = '<p class="section-hint">Prioridade por gasto observado, não por economia prometida. Período: '
+            + esc(data.period) + '. Custo de vários meses não é custo mensal. Valores de meses em aberto podem mudar.</p>'
+            + '<div class="table-scroll"><table><thead><tr><th>Fila de investigação</th><th>Custo do período</th><th>Participação</th><th>Próxima validação</th></tr></thead><tbody>'
+            + services + '</tbody></table></div>'
+            + '<h3>Onde o gasto foi cobrado · todos os recursos retornados</h3>'
+            + (data.resourceDetailAvailable
+              ? '<p>Total detalhado: ' + fmtFull(data.queriedResourceCost)
+                + '. Diferença para o consolidado: ' + fmtFull(REPORT.summary.totalCost - data.queriedResourceCost)
+                + '. Diferença não conciliada: pode incluir coleta parcial ou cobranças sem ResourceId; não foi distribuída por suposição.</p>'
+                + '<div class="table-scroll"><table><thead><tr><th>Recurso / evidência</th><th>Custo do período</th><th>Cobrança por mês</th><th>Responsável</th></tr></thead><tbody>'
+                + (resources || '<tr><td colspan="4">A consulta não retornou custos atribuídos a recursos.</td></tr>') + '</tbody></table></div>'
+              : '<p class="warning-banner">Detalhamento por recurso indisponível neste arquivo. Não é custo zero. Gere um novo export para consultar a cobrança por recurso, mesmo sem achados de ociosidade.</p>')
+            + '<p class="section-hint">Fluxo de decisão: confirmar cobrança e responsável → validar utilização e destino → aprovar ação e rollback → comparar origem e destino em meses fechados. Os valores desta fila não são somados às economias.</p>';
+      }
 
       function renderCashCapture() {
         const data = REPORT.cashCapture;
@@ -1038,10 +1081,11 @@ export const REPORT_CLIENT_SCRIPT = `
       renderKPI('kpi-cost', fmt(REPORT.summary.totalCost), REPORT.costs.period + ' (' + REPORT.summary.currency + ')');
       renderKPI('kpi-idle', String(REPORT.summary.idleResourceCount));
       renderKPI('kpi-recs', String(REPORT.summary.recommendationCount));
-      renderKPI('kpi-savings', fmt(REPORT.summary.annualSavingsOpportunity));
+      renderKPI('kpi-savings', recsData.length ? fmt(REPORT.summary.annualSavingsOpportunity) : 'Não quantificada');
 
       renderExecutiveSummary();
       renderCashCapture();
+      renderSpendWorklist();
       renderDecisionEngine();
       renderAging();
       renderForgottenEnvironments();
@@ -1089,6 +1133,7 @@ export const generateStaticReport = (data: StaticReportData): string => {
     subscriptionId: data.subscriptionId,
     summary,
     costs: data.costs,
+    spendWorklist: buildSpendWorklist(data.costs, data.resourceLedgers, data.inventory),
     idleResources: data.idleResources,
     recommendations: data.recommendations,
     warnings: data.warnings ?? [],
@@ -1293,6 +1338,10 @@ export const generateStaticReport = (data: StaticReportData): string => {
       .bar-track { background: var(--surface3); border-radius: 999px; height: 7px; overflow: hidden; }
       .bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--accent-strong), var(--accent)); transition: width 0.5s ease; }
       .bar-row .bar-val { text-align: right; color: var(--text); font-weight: 600; white-space: nowrap; }
+      #spend-worklist-body h3 { margin: 1.5rem 0 0.8rem; }
+      #spend-worklist-body td { vertical-align: top; white-space: normal; overflow-wrap: anywhere; min-width: 130px; }
+      #spend-worklist-body td:nth-child(2) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+      #spend-worklist-body td:last-child { min-width: 220px; line-height: 1.6; }
 
       .empty { padding: 2.5rem; text-align: center; color: var(--muted); font-size: 0.88rem; }
 
@@ -1471,6 +1520,11 @@ export const generateStaticReport = (data: StaticReportData): string => {
           <div class="sub">Estimativa bruta; pode conter sobreposições e não representa caixa confirmado</div>
         </div>
       </div>
+
+      <section id="spend-worklist-section">
+        <h2>Plano de trabalho · Do gasto à decisão</h2>
+        <div class="card" id="spend-worklist-body"></div>
+      </section>
 
       <section id="cash-capture-section" hidden>
         <h2>Plano de Captura de Caixa · Economia sem ilusões</h2>

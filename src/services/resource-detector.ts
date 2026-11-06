@@ -153,6 +153,7 @@ const toArray = async <T>(iterable: AsyncIterable<T> | Iterable<T>): Promise<T[]
 export class ResourceDetectorService {
   private readonly logger = createLogger({ service: 'resource-detector' });
   private readonly inventory = new Map<string, Resource>();
+  private detectionWarnings: string[] = [];
   private readonly monitorClient: MonitorClientLike;
   private readonly computeClient: ComputeClientLike;
   private readonly networkClient: NetworkClientLike;
@@ -613,7 +614,17 @@ export class ResourceDetectorService {
     ];
 
     for (const candidate of candidates) {
-      const metrics = await this.getMetrics(resourceId, candidate.metric, 'PT1H', 'avg');
+      let metrics: ResourceMetric[];
+      try {
+        metrics = await this.getMetrics(resourceId, candidate.metric, 'PT1H', 'avg');
+      } catch (error: unknown) {
+        const failure = error as { statusCode?: number; message?: string };
+        if (failure.statusCode === 400 &&
+          /failed to find metric configuration|not a valid metric|metric.*not supported/i.test(failure.message ?? '')) {
+          continue;
+        }
+        throw error;
+      }
       if (metrics.length >= MIN_DATA_POINTS) {
         return { metrics, average: this.metricAverage(metrics), label: candidate.label };
       }
@@ -803,19 +814,27 @@ export class ResourceDetectorService {
 
     const settled = await Promise.allSettled(detectors.map(([, run]) => run()));
     const results: IdleResource[] = [];
+    const warnings: string[] = [];
 
     settled.forEach((outcome, index) => {
       const [label] = detectors[index] ?? ['unknown'];
       if (outcome.status === 'fulfilled') {
         results.push(...outcome.value);
       } else {
-        this.logger.error(`Detector "${label}" failed and was skipped; other resource types are unaffected`, {
+        warnings.push(`Detector "${label}" indisponível: cobertura parcial; ausência de achados não comprova ausência de desperdício.`);
+        this.logger.warn(`Detector "${label}" indisponível; consulte os avisos de cobertura do relatório.`);
+        this.logger.debug('Detector failure details', {
           error: outcome.reason instanceof Error ? outcome.reason.message : 'unknown',
         });
       }
     });
 
+    this.detectionWarnings = warnings;
     return results.sort((left, right) => right.estimatedMonthlySavings - left.estimatedMonthlySavings);
+  }
+
+  public getDetectionWarnings(): string[] {
+    return [...this.detectionWarnings];
   }
 
   /**
@@ -844,7 +863,7 @@ export class ResourceDetectorService {
     try {
       return await operation();
     } catch (error: unknown) {
-      this.logger.error(message, { error: error instanceof Error ? error.message : 'unknown' });
+      this.logger.debug(message, { error: error instanceof Error ? error.message : 'unknown' });
       throw new AzureApiError(message, 500, error);
     }
   }
@@ -864,7 +883,9 @@ export class ResourceDetectorService {
 
     return (result.value ?? []).flatMap((metric) =>
       (metric.timeseries ?? []).flatMap((series) =>
-        (series.data ?? []).map((point) => ({
+        (series.data ?? []).filter((point) =>
+          Number.isFinite(point.average ?? point.total),
+        ).map((point) => ({
           resourceId,
           metricName: metric.name?.value ?? metricName,
           value: point.average ?? point.total ?? 0,

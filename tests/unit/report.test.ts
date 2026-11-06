@@ -92,6 +92,7 @@ describe('generateStaticReport', () => {
         textContent: id === 'report-data' ? embedded![1]! : '',
         innerHTML: '', hidden: true, value: id === 'idle-sort' ? 'idleScore-desc' : '',
       });
+
       return elements.get(id)!;
     };
     new Script(REPORT_CLIENT_SCRIPT).runInNewContext({ document: { getElementById }, Intl });
@@ -102,6 +103,37 @@ describe('generateStaticReport', () => {
     expect(rendered).toContain('Nenhum valor aqui é caixa confirmado');
     expect(rendered).toContain('&lt;img');
     expect(rendered).not.toContain('<img');
+  });
+
+  it('renders precise spend and next steps without idle findings or invented resource costs', () => {
+    const html = generateStaticReport({
+      ...baseData, idleResources: [], recommendations: [],
+      costs: { ...mockCostSummary, byService: { Storage: 123.45, '<img>': 0.0002 } },
+      resourceLedgers: [{
+        currency: mockCostSummary.currency, months: ['2026-01'],
+        resources: { '/subscriptions/sub/resourcegroups/rg/providers/type/<script>': { '2026-01': 123.45 } },
+      }],
+    });
+    const embedded = /<script id="report-data" type="application\/json">([\s\S]*?)<\/script>/.exec(html);
+    type Stub = { textContent: string; innerHTML: string; hidden: boolean; value: string };
+    const elements = new Map<string, Stub>();
+    const getElementById = (id: string): Stub => {
+      if (!elements.has(id)) elements.set(id, {
+        textContent: id === 'report-data' ? embedded![1]! : '',
+        innerHTML: '', hidden: false, value: id === 'idle-sort' ? 'idleScore-desc' : '',
+      });
+      return elements.get(id)!;
+    };
+    new Script(REPORT_CLIENT_SCRIPT).runInNewContext({ document: { getElementById }, Intl });
+    const rendered = getElementById('spend-worklist-body').innerHTML;
+    expect(rendered).toContain('123,45');
+    expect(rendered).toContain('0,000200');
+    expect(rendered).toContain('snapshots');
+    expect(rendered).toContain('Somente na cobrança');
+    expect(rendered).toContain('&lt;script&gt;');
+    expect(rendered).not.toContain('<script>');
+    expect(getElementById('kpi-savings').textContent).toBe('Não quantificada');
+    expect(getElementById('chart-service').innerHTML).toContain('0,000200');
   });
 
   it('renders business efficiency changes and avoids exposing unsettled costs', () => {

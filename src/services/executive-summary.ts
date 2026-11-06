@@ -15,6 +15,7 @@ export type ExecutiveSummaryInput = {
   ownership: OwnershipReport;
   diff?: CostDiff | undefined;
   subscriptionCount: number;
+  warnings?: string[];
 };
 
 const money = (value: number, currency: string): string => {
@@ -50,12 +51,13 @@ export class ExecutiveSummaryService {
     const currency = costs.currency;
     const annualSavings = recommendations.reduce((sum, item) => sum + item.annualSavings, 0);
     const monthlySavings = recommendations.reduce((sum, item) => sum + item.monthlySavings, 0);
-    const wasteRatio = costs.totalAmount > 0 ? monthlySavings / costs.totalAmount : 0;
 
     return ExecutiveSummarySchema.parse({
-      headline: this.buildHeadline(annualSavings, currency, wasteRatio, idleResources.length),
-      paragraphs: this.buildParagraphs({ ...input, annualSavings, monthlySavings, wasteRatio }),
-      highlights: this.buildHighlights({ costs, ownership, diff, annualSavings, wasteRatio, subscriptionCount }),
+      headline: input.warnings?.length
+        ? 'Análise parcial: há lacunas de coleta. Não conclua ausência de desperdício.'
+        : this.buildHeadline(annualSavings, currency, idleResources.length),
+      paragraphs: this.buildParagraphs({ ...input, annualSavings, monthlySavings }),
+      highlights: this.buildHighlights({ costs, ownership, diff, annualSavings, subscriptionCount }),
       topActions: this.buildTopActions(recommendations, currency),
       generatedBy: 'heuristic',
     });
@@ -64,17 +66,16 @@ export class ExecutiveSummaryService {
   private buildHeadline(
     annualSavings: number,
     currency: string,
-    wasteRatio: number,
     idleCount: number,
   ): string {
     if (idleCount === 0) {
-      return 'Nenhum desperdício relevante identificado neste ciclo. O ambiente está aderente ao uso contratado.';
+      return 'Nenhum desperdício relevante identificado pelos detectores neste ciclo. Isso não comprova eficiência ou aderência contratual; revise a fila de gasto observado.';
     }
-    return `Há ${money(annualSavings, currency)} por ano em desperdício recuperável, o equivalente a ${percent(wasteRatio)} do custo atual do ambiente.`;
+    return `Há ${money(annualSavings, currency)} por ano em oportunidades estimadas de redução. Valores brutos, sujeitos a validação de cobrança, sobreposição e impacto.`;
   }
 
   private buildParagraphs(
-    input: ExecutiveSummaryInput & { annualSavings: number; monthlySavings: number; wasteRatio: number },
+    input: ExecutiveSummaryInput & { annualSavings: number; monthlySavings: number },
   ): string[] {
     const { costs, idleResources, recommendations, ownership, diff, subscriptionCount } = input;
     const currency = costs.currency;
@@ -86,8 +87,8 @@ export class ExecutiveSummaryService {
         : `${subscriptionCount} subscriptions analisadas`;
     paragraphs.push(
       `No período ${costs.period}, ${scope} somaram ${money(costs.totalAmount, currency)}. ` +
-        `Foram identificados ${idleResources.length} recursos ociosos ou subutilizados, que geram ` +
-        `${money(input.monthlySavings, currency)} por mês em custo sem contrapartida de uso.`,
+        `Foram identificados ${idleResources.length} recursos candidatos à revisão de utilização. ` +
+        `As recomendações somam ${money(input.monthlySavings, currency)}/mês em estimativas brutas, não economia comprovada.`,
     );
 
     const topService = this.topEntry(costs.byService);
@@ -95,7 +96,7 @@ export class ExecutiveSummaryService {
       const share = costs.totalAmount > 0 ? topService[1] / costs.totalAmount : 0;
       paragraphs.push(
         `A maior concentração de gasto está em ${topService[0]}, responsável por ${money(topService[1], currency)} ` +
-          `(${percent(share)} do total). Priorizar a revisão desse serviço tende a produzir o maior impacto financeiro.`,
+          `(${percent(share)} do total). Investigue seus recursos e medidores; concentração de gasto não comprova desperdício.`,
       );
     }
 
@@ -119,8 +120,8 @@ export class ExecutiveSummaryService {
     if (quickWins.length > 0) {
       const quickWinSavings = quickWins.reduce((sum, item) => sum + item.annualSavings, 0);
       paragraphs.push(
-        `Existem ${quickWins.length} ação(ões) de baixo risco e baixo esforço que liberam ${money(quickWinSavings, currency)} por ano ` +
-          'e podem ser executadas imediatamente pelo plano de remediação gerado junto a este relatório.',
+        `Existem ${quickWins.length} ação(ões) classificadas como baixo risco e baixo esforço, com estimativa bruta de ${money(quickWinSavings, currency)} por ano. ` +
+          'Validar dependências, cobrança de origem/destino e aprovação antes de executar qualquer remediação.',
       );
     }
 
@@ -157,22 +158,21 @@ export class ExecutiveSummaryService {
     ownership: OwnershipReport;
     diff?: CostDiff | undefined;
     annualSavings: number;
-    wasteRatio: number;
     subscriptionCount: number;
   }): ExecutiveSummary['highlights'] {
-    const { costs, ownership, diff, annualSavings, wasteRatio, subscriptionCount } = input;
+    const { costs, ownership, diff, annualSavings, subscriptionCount } = input;
     const currency = costs.currency;
 
     const highlights: ExecutiveSummary['highlights'] = [
       {
-        label: 'Economia anual recuperável',
+        label: 'Economia anual estimada (bruta)',
         value: money(annualSavings, currency),
         tone: annualSavings > 0 ? 'positive' : 'neutral',
       },
       {
-        label: 'Desperdício sobre o custo total',
-        value: percent(wasteRatio),
-        tone: wasteRatio > 0.15 ? 'negative' : wasteRatio > 0.05 ? 'neutral' : 'positive',
+        label: 'Natureza da oportunidade',
+        value: 'Estimativa; não caixa confirmado',
+        tone: 'neutral',
       },
       {
         label: 'Cobertura de tag de responsável',

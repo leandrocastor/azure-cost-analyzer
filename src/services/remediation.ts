@@ -93,7 +93,7 @@ export class RemediationService {
   }
 
   /**
-   * Renders the plans as a single idempotent Bash script with dry-run by default.
+   * Renders the plans as a single Bash script with dry-run by default.
    * The operator reviews it, then re-runs with APPLY=true to execute.
    */
   public buildApplyScript(plans: RemediationPlan[]): string {
@@ -161,11 +161,13 @@ export class RemediationService {
       lines.push(`  # verificação: ${preCheck.description}`, `  ${preCheck.command}`);
     }
 
-    if (plan.risk === 'high') {
+    if (plan.risk === 'high' || plan.actionType === 'DELETE' || plan.actionType === 'CLEANUP') {
       lines.push(
         '  if [[ "$APPLY" == "true" ]]; then',
-        `    read -r -p "  Ação de RISCO ALTO em ${plan.resourceName}. Digite CONFIRMO para continuar: " answer`,
-        '    if [[ "$answer" != "CONFIRMO" ]]; then echo "  -> ignorado pelo operador"; answer=""; fi',
+        `    if ! read -r -p "  Ação de RISCO ALTO ou destrutiva em ${plan.resourceName}. Digite CONFIRMO para continuar: " answer || [[ "$answer" != "CONFIRMO" ]]; then`,
+        '      echo "  -> execução interrompida: confirmação não concedida"',
+        '      exit 1',
+        '    fi',
         '  fi',
       );
     }
@@ -251,7 +253,7 @@ export class RemediationService {
     const isAppService = coordinates.resourceType.toLowerCase() === 'sites';
 
     const backup = step(
-      'Salva o estado atual do recurso para permitir rollback',
+      'Registra metadados do recurso; não é backup dos dados nem template ARM restaurável',
       `bash -c "az resource show --ids ${id} -o json > ${shellQuote(`backup-${coordinates.name}.json`)}"`,
     );
 
@@ -363,8 +365,8 @@ export class RemediationService {
       case 'CLEANUP':
         return [
           step(
-            'Recria o recurso a partir do backup gerado antes da exclusão',
-            `az deployment group create --subscription ${subscription} --resource-group ${group} --template-file ${backupFile}`,
+            'Não há rollback automático para exclusão. Restaure com backup de dados validado e IaC original; o JSON de metadados não recupera o recurso',
+            `echo 'SEM ROLLBACK AUTOMATICO: valide restauracao de dados e IaC antes de excluir.'`,
           ),
         ];
 
@@ -470,12 +472,12 @@ export class RemediationService {
       : 'Esta ação não interrompe o recurso, mas altera sua configuração de cobrança.';
 
     const templates: Record<ActionType, string> = {
-      DELETE: `A exclusão de ${name} é destrutiva: dados e configuração são perdidos, exceto o que estiver salvo no backup gerado pelo script. Qualquer aplicação ou processo que ainda dependa deste recurso (mesmo sem tráfego visível na janela observada) para de funcionar imediatamente.`,
+      DELETE: `A exclusão de ${name} é destrutiva: dados e configuração podem ser perdidos. O script salva somente metadados, não dados nem um template ARM restaurável. Exige backup de dados validado e IaC original para restauração manual. Qualquer aplicação ou processo que ainda dependa deste recurso (mesmo sem tráfego visível na janela observada) para de funcionar imediatamente.`,
       DOWNSIZE: `Reduzir o porte de ${name} diminui a capacidade de CPU/memória/IOPS disponível. Se a ociosidade observada não cobrir picos sazonais (fechamento de mês, campanhas), o recurso pode ficar subdimensionado após a mudança.`,
       CHANGE_SKU: `A troca de SKU/tier de ${name} pode remover recursos do tier atual (SLA, redundância, features) que a aplicação dependa, mesmo que o custo caia.`,
       SCHEDULE: `Agendar o desligamento de ${name} interrompe qualquer processo em execução no horário programado, incluindo jobs, sessões de usuário ou integrações que rodem fora do horário comercial.`,
       MIGRATE: `Migrar ${name} exige revalidar strings de conexão, identidades gerenciadas e regras de rede; uma migração incompleta pode deixar aplicações apontando para o recurso antigo.`,
-      CLEANUP: `${name} aparenta ser um recurso órfão (sem associação ativa). Removê-lo é seguro apenas se a checagem de dependências no pré-check não encontrar nenhuma referência ativa.`,
+      CLEANUP: `${name} aparenta ser um recurso órfão (sem associação ativa). A ausência de referências nos pré-checks não comprova ausência de dependências. A remoção é destrutiva e não tem rollback automático; metadados não são backup dos dados.`,
     };
 
     return `${templates[recommendation.actionType]} ${downtimeNote} Resource group: ${coordinates.resourceGroup}.`;

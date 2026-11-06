@@ -2,10 +2,69 @@
 
 [Português (Brasil)](./README.md) | [English](./README.en.md)
 
-Azure Cost Analyzer de nível empresarial com uma CLI em TypeScript e um dashboard baseado em Express para visibilidade de custos, detecção de anomalias, descoberta de recursos ociosos e recomendações de otimização.
+Investigue o que mudou na fatura Azure, confira as linhas que explicam a variação e identifique o que ainda precisa de validação. A CLI oferece investigação **offline de CSV FOCUS, sem login Azure**, além dos comandos existentes de análise do ambiente e relatórios.
+
+## Comece sem credenciais: uma investigação reproduzível
+
+Após instalar o projeto, execute:
+
+```bash
+cost-analyzer investigate --demo --output ./investigacao-demo.html
+# Ou, no repositório após npm install:
+node dist/cli/index.js investigate --demo --format json
+```
+
+O exemplo é **inteiramente sintético** e tem uma resposta verificável: a variação em BRL é **+830**, composta por +450 em VM, −20 em Storage, +100 por redução de um crédito e +300 em compra de reserva. Em USD, a variação é +2, apresentada separadamente. Compra antecipada não significa aumento de consumo; redução de crédito também aumenta a fatura sem exigir um recurso novo.
+
+O HTML é estático e abre diretamente no navegador, sem servidor, JavaScript, chamadas ao Azure ou envio dos dados a terceiros. Não gera comandos de alteração de recursos.
+
+### Investigue seus próprios arquivos FOCUS
+
+Obtenha os CSVs de **custos e uso no formato FOCUS** via [exportações do Cost Management](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports). Inclua todos os arquivos/partições das duas competências, no mesmo escopo. O formato legado de custos reais/amortizados não é convertido automaticamente.
+
+```bash
+cost-analyzer investigate \
+  --input ./agosto.csv \
+  --input ./setembro-parte-1.csv \
+  --input ./setembro-parte-2.csv \
+  --baseline 2026-08 \
+  --current 2026-09 \
+  --output ./investigacao.html
+
+# JSON para revisão automatizada ou reprodução de um caso
+cost-analyzer investigate --input ./focus.csv \
+  --baseline 2026-08 --current 2026-09 --format json > investigacao.json
+```
+
+**O que a investigação entrega:**
+
+- Saldo base, atual e variação **por moeda**, com créditos e reembolsos preservados.
+- Decomposição por serviço, recurso e categoria de cobrança, ordenada pelo movimento absoluto; são três visões do mesmo total, não economias somáveis.
+- Evidência de cada grupo com arquivo, registro, linhas físicas e SHA-256 da fonte. Linhas com campos multilinha mantêm a localização correta.
+- Cobranças sem `ResourceId` preservadas, moedas com apenas uma competência sinalizadas e conteúdo repetido explicitado, sem deduplicação silenciosa.
+- Valores decimais exatos em strings no JSON, incluindo frações de centavo: não usa ponto flutuante para calcular saldos.
+- **Ponte da variação**: separa cobranças de uso, créditos, compras, impostos, ajustes e correções, com interpretação e linhas de evidência.
+- **Quantidade versus custo unitário observado**: quando há dados homogêneos nos dois períodos, decompõe a cobrança de uso em efeito quantidade e efeito custo unitário médio observado; quando faltam dados, explica por que não conclui.
+
+No exemplo sintético, os +450 da VM são decompostos em **+200 de efeito quantidade** (100 → 120 horas ao custo unitário médio da base) e **+250 de efeito custo unitário observado**. Isso é uma ponte aritmética, **não prova aumento de tarifa**: descontos, câmbio e composição também podem mudar o custo por unidade.
+
+A decomposição usa `PricingQuantity` e `PricingUnit` e exige identificação de `ProviderName`, `BillingAccountId`, `SubAccountId`, `ResourceId`, `SkuId`, `x_SkuMeterId` e `PricingCategory`. Região, modelo de preço e compromisso (`CommitmentDiscountId`) não são misturados no mesmo grupo. Unidades ou medidores diferentes são separados. Quantidade ausente, inválida ou não positiva, uso com custo negativo, correções (`ChargeClass`) e grupos sem linhas nos dois períodos ficam **sem decomposição**, preservando integralmente a cobrança. Sem essas colunas, a investigação básica continua funcionando.
+
+Fórmula: efeito quantidade = `custoBase × (quantidadeAtual − quantidadeBase) / quantidadeBase`; efeito custo unitário observado = `variação − efeitoQuantidade`. A divisão é truncada na 18ª casa decimal e o resíduo fica no segundo efeito, preservando a conciliação exata. Não há normalização por duração do mês; o efeito quantidade representa o volume total faturado.
+
+**Contrato de entrada:** CSV UTF-8 separado por vírgulas, com aspas/aspas escapadas, BOM e CRLF aceitos. As colunas obrigatórias são `BillingPeriodStart`, `BillingPeriodEnd`, `BillingCurrency`, `BilledCost`, `ServiceName` e `ChargeCategory`. `ProviderName`, `BillingAccountId`, `SubAccountId`, `ResourceId` e `ResourceName` enriquecem a atribuição quando presentes; mantenha-as nos arquivos reais para não perder distinções de escopo. As demais colunas são aceitas, mas não copiadas para o resultado. Não é um validador completo de conformidade FOCUS. Consulte o [schema oficial](https://learn.microsoft.com/azure/cost-management-billing/dataset-schema/cost-usage-details-focus).
+
+**Limites explícitos:** compara `BilledCost`, não custo amortizado (`EffectiveCost`). A competência é o mês de início de `BillingPeriodStart`, não o mês de consumo; não rateia ciclos nem normaliza períodos de durações diferentes. A presença de linhas não comprova exportação completa, fatura fechada ou escopos equivalentes. Ausência de cobrança não prova exclusão do recurso; variação não prova causalidade nem economia realizada. Não identifica mudança de tarifa ou câmbio; a decomposição de quantidade exige os campos adicionais descritos acima.
+
+Nesta primeira entrega, são aceitos arquivos CSV descompactados com limite combinado de **50 MiB**, valores com até 18 casas decimais e 30 dígitos inteiros, incluindo notação científica dentro desses limites. Entradas inválidas interrompem a investigação, sem descartar cobranças silenciosamente. Arquivos idênticos são rejeitados para evitar importação dupla; linhas repetidas são preservadas com aviso, pois podem ser legítimas. Linhas de outras competências são contabilizadas como excluídas do comparativo. O resultado é determinístico para os mesmos arquivos, ordem e competências.
+
+O HTML padrão é `azure-cost-investigation.html`; JSON vai para stdout quando `--output` não é informado. A gravação com `--output` **não sobrescreve arquivos existentes** e usa permissões `0600` em sistemas POSIX. Relatórios contêm identificadores e valores financeiros: revise-os antes de compartilhar. Para reportar problemas à comunidade, use o exemplo sintético ou um caso anonimizado, nunca sua fatura real.
 
 ## Funcionalidades
 
+- **Fila de gasto observado no export HTML:** custos por serviço com centavos (e frações quando necessário), validação específica por serviço e todos os recursos retornados pela consulta de cobrança, mesmo sem achados de ociosidade. Mostra meses, responsável quando disponível e diferença não conciliada para o consolidado; não inventa preços para preencher lacunas nem trata gasto como economia.
+- **Cobertura explícita:** falhas de detectores deixam a conclusão como análise parcial, tanto no terminal quanto no relatório. SQL usa CPU quando DTU não é suportado; falta de amostras não vira utilização zero. Ausência de achados não certifica eficiência.
+- **Investigação offline FOCUS**: explica a composição da variação da fatura com valores exatos por moeda e rastreabilidade às linhas de origem; demonstração sem conta Azure
 - Agregação via Azure Cost Management por serviço, grupo de recursos, localização ou tags
 - Análise de tendência de custos, detecção de anomalias e previsão simples
 - Detecção de recursos ociosos para VMs, App Services, **App Service Plans** (vazios ou subutilizados), Storage, SQL, discos, IPs públicos e load balancers
@@ -191,7 +250,15 @@ APPLY=true ./apply-remediation.sh
 APPLY=true ONLY=vm-web01 ./apply-remediation.sh
 ```
 
-Ações classificadas como risco alto exigem que o operador digite `CONFIRMO` antes de prosseguir. Cada bloco inclui os comandos de rollback como comentário.
+Ações classificadas como risco alto e todas as exclusões/limpezas (`DELETE`, `CLEANUP`), mesmo de risco baixo, exigem que o operador digite `CONFIRMO`. Recusa, resposta vazia ou entrada encerrada **interrompem o script com código 1 antes da aplicação**, sem continuar para os próximos recursos. O modo simulação não pede confirmação.
+
+**Exclusão não tem rollback automático.** O JSON gerado por `az resource show` registra apenas metadados; não é backup dos dados nem um template ARM restaurável. O plano exige backup real validado e IaC original para restauração manual e não oferece uma falsa recriação por deployment desse JSON. Confirmação não substitui aprovação do responsável, validação de dependências ou janela de manutenção.
+
+#### Integridade e cobertura da análise online
+
+- Consultas resumidas, por recurso, por tag e de histórico **buscam automaticamente todas as páginas** indicadas por `nextLink`, preservando o corpo da consulta e a autenticação do SDK. Cada requisição respeita a cota QPU e o tratamento de HTTP 429. Nenhum total ou cobertura é armazenado/publicado se uma página falhar. Links fora do endpoint/assinatura esperados, tokens repetidos ou colunas incompatíveis interrompem a consulta com erro explícito, evitando dados parciais e loops.
+- Relatórios online consolidados com moedas diferentes são bloqueados, sem conversão implícita. Use `--subscription` para relatórios separados ou `investigate` para visão por moeda.
+- Falhas de detectores individuais aparecem como **cobertura parcial** no relatório exportado, nos avisos de `detect`/`recommend` e em `warnings` de `/api/summary`. Os endpoints de listas preservam o formato e sinalizam o estado pelo cabeçalho `X-Analysis-Partial`; os achados válidos dos demais detectores são mantidos. Falta de achado não comprova falta de desperdício.
 
 #### Comparativo entre execuções
 

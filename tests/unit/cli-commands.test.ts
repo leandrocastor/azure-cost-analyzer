@@ -8,6 +8,7 @@ import { generateStaticReport } from '@/dashboard/report';
 const spinner = {
   start: vi.fn(() => spinner),
   succeed: vi.fn(),
+  warn: vi.fn(),
   fail: vi.fn(),
 };
 
@@ -38,6 +39,7 @@ const resourceGraphMock = vi.hoisted(() => ({
 }));
 const resourceDetectorMock = vi.hoisted(() => ({
   detectAll: vi.fn(async () => mockIdleResources),
+  getDetectionWarnings: vi.fn((): string[] => []),
   getInventory: vi.fn(() => mockIdleResources.map((item) => item.resource)),
   detectIdleVMs: vi.fn(async () => mockIdleResources.slice(0, 1)),
   detectIdleAppServices: vi.fn(async () => mockIdleResources.slice(0, 1)),
@@ -100,6 +102,21 @@ const businessMetricsPath = path.resolve(__dirname, '../fixtures/business-metric
 const initiativesPath = path.resolve(__dirname, '../fixtures/initiative-ledger-command-input.json');
 
 describe('CLI command classes', () => {
+  it('refuses a consolidated export with different subscription billing currencies', async () => {
+    costAnalyzerMock.queryCosts
+      .mockResolvedValueOnce({ ...mockCostSummary, currency: 'USD' })
+      .mockResolvedValueOnce({ ...mockCostSummary, currency: 'BRL' });
+    await expect(ExportCommand.run(['--output', reportOutputPath, '--no-remediation']))
+      .rejects.toThrow('Mixed billing currencies');
+    expect(existsSync(reportOutputPath)).toBe(false);
+  });
+
+  it('embeds detector coverage warnings in the exported report', async () => {
+    resourceDetectorMock.getDetectionWarnings.mockReturnValue(['Detector "Storage" indisponível: cobertura parcial.']);
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-a', '--no-remediation']);
+    expect(readFileSync(reportOutputPath, 'utf8')).toContain('Detector \\"Storage\\" indisponível: cobertura parcial.');
+  });
+
   beforeEach(() => {
     process.env = { ...process.env, ...validEnv };
     spinner.start.mockClear();
@@ -115,6 +132,7 @@ describe('CLI command classes', () => {
     costAnalyzerMock.getCostsByPeriod.mockClear();
     costAnalyzerMock.detectAnomalies.mockClear();
     resourceDetectorMock.detectAll.mockClear();
+    resourceDetectorMock.getDetectionWarnings.mockReturnValue([]);
     resourceDetectorMock.getInventory.mockClear();
     resourceDetectorMock.detectIdleVMs.mockClear();
     resourceDetectorMock.detectIdleAppServices.mockClear();
@@ -298,6 +316,33 @@ describe('CLI command classes', () => {
     expect(html).toContain('Plano de Captura de Caixa');
   });
 
+  it('fetches and displays billed resources even when no detector finds idle resources', async () => {
+    resourceDetectorMock.detectAll.mockResolvedValueOnce([]);
+    optimizerMock.generateRecommendations.mockResolvedValueOnce([]);
+    costAnalyzerMock.queryResourceCosts.mockResolvedValueOnce({
+      currency: mockCostSummary.currency,
+      months: ['2026-09'],
+      resources: { '/subscriptions/sub-3/resourcegroups/rg/providers/microsoft.storage/storageaccounts/billed-only': { '2026-09': 123.45 } },
+    });
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+    expect(costAnalyzerMock.queryResourceCosts).toHaveBeenCalledWith('sub-3', expect.any(String), expect.any(String));
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('"spendWorklist"');
+    expect(html).toContain('"cost":123.45');
+    expect(html).not.toContain('O ambiente está aderente ao uso contratado');
+  });
+
+  it('marks a partial export as a warning, not unconditional success', async () => {
+    resourceDetectorMock.getDetectionWarnings.mockReturnValueOnce(['SQL: cobertura parcial']);
+    const warn = vi.spyOn(ExportCommand.prototype, 'warn').mockImplementation(() => undefined);
+    await ExportCommand.run(['--output', reportOutputPath, '--subscription', 'sub-3']);
+    expect(spinner.warn).toHaveBeenCalledWith(expect.stringContaining('análise parcial'));
+    expect(spinner.succeed).not.toHaveBeenCalled();
+    const html = readFileSync(reportOutputPath, 'utf8');
+    expect(html).toContain('Análise parcial: há lacunas de coleta');
+    warn.mockRestore();
+  });
+
   it('queries monthly billing by business tag and embeds outcome efficiency in the report', async () => {
     const monthAtOffset = (offset: number): string => {
       const date = new Date();
@@ -455,7 +500,7 @@ describe('CLI command classes', () => {
 
     await ExportCommand.run(['--output', reportOutputPath]);
 
-    expect(spinner.succeed).toHaveBeenCalledWith(expect.stringContaining('2 subscriptions analyzed'));
+    expect(spinner.warn).toHaveBeenCalledWith(expect.stringContaining('análise parcial'));
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Custos indisponíveis para "Subscription A"'));
 
     const html = readFileSync(reportOutputPath, 'utf8');

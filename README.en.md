@@ -2,10 +2,67 @@
 
 [Português (Brasil)](./README.md) | [English](./README.en.md)
 
-Enterprise-grade Azure Cost Analyzer with a TypeScript CLI and an Express-powered dashboard for cost visibility, anomaly detection, idle resource discovery, and optimization recommendations.
+Investigate what changed in your Azure bill, inspect the source rows behind each movement, and identify what still needs verification. The CLI provides **offline FOCUS CSV investigation without Azure login**, alongside the existing live-environment analysis and reporting commands.
+
+## Start without credentials: a reproducible investigation
+
+After installing the project:
+
+```bash
+cost-analyzer investigate --demo --output ./investigation-demo.html
+# Or, from the repository after npm install:
+node dist/cli/index.js investigate --demo --format json
+```
+
+The **entirely synthetic** example has a verifiable answer: BRL increased by **830**, comprising +450 for a VM, −20 for Storage, +100 from a smaller credit, and +300 from a reservation purchase. USD increased by 2, reported separately. An upfront purchase is not increased consumption; a smaller credit can increase the bill without any new resources.
+
+The standalone HTML opens directly in a browser: no server, JavaScript, Azure calls, data uploads, or resource-change commands.
+
+### Investigate your own FOCUS files
+
+Download **FOCUS cost and usage CSVs** through [Cost Management exports](https://learn.microsoft.com/azure/cost-management-billing/costs/tutorial-improved-exports). Include every file/partition for both billing periods with the same scope. Legacy actual/amortized datasets are not automatically converted.
+
+```bash
+cost-analyzer investigate \
+  --input ./august.csv \
+  --input ./september-part-1.csv \
+  --input ./september-part-2.csv \
+  --baseline 2026-08 \
+  --current 2026-09 \
+  --output ./investigation.html
+
+cost-analyzer investigate --input ./focus.csv \
+  --baseline 2026-08 --current 2026-09 --format json > investigation.json
+```
+
+The investigation preserves credits and refunds, reconciles each currency separately, and provides service/resource/charge-category breakdowns sorted by absolute movement. These are alternative views of the same total, not additive savings. Every driver links to its source file, CSV record and physical lines, with a SHA-256 source fingerprint. Charges without resource IDs are retained; missing currency periods and repeated rows are flagged. JSON monetary values are exact decimal strings, not floating-point calculations.
+
+The billing bridge separates usage, credits, purchases, taxes, adjustments and corrections with source evidence. When homogeneous usage data exists in both periods, a second bridge separates **quantity effect** from **observed blended unit-cost effect**. In the demo, the VM's +450 consists of +200 from quantity (100 → 120 hours at baseline blended unit cost) and +250 from observed unit cost. This does **not** prove a tariff increase: discounts, currency exchange or composition can affect the latter.
+
+Decomposition requires `PricingQuantity`, `PricingUnit`, `ProviderName`, `BillingAccountId`, `SubAccountId`, `ResourceId`, `SkuId`, `x_SkuMeterId` and `PricingCategory`. Region, pricing model and `CommitmentDiscountId` are also kept separate. Missing/invalid/nonpositive quantities, negative usage charges, corrections (`ChargeClass`) or a group present in only one period remain explicitly inconclusive; billed amounts are retained. The basic investigation still works without these additional columns.
+
+Formula: quantity effect = `baselineCost × (currentQuantity − baselineQuantity) / baselineQuantity`; observed unit-cost effect = `delta − quantityEffect`. Division truncates at 18 decimal places and leaves the residual in the second effect, so the bridge reconciles exactly. Monthly duration is not normalized: quantity means total billed volume.
+
+**Input contract:** comma-separated UTF-8 CSV; quoted fields, escaped quotes, BOM and CRLF are supported. Required columns: `BillingPeriodStart`, `BillingPeriodEnd`, `BillingCurrency`, `BilledCost`, `ServiceName`, `ChargeCategory`. Keep `ProviderName`, `BillingAccountId`, `SubAccountId`, `ResourceId` and `ResourceName` when available to preserve scope attribution. Other columns are accepted but not included in the output. This is not a full FOCUS conformance validator; see the [official schema](https://learn.microsoft.com/azure/cost-management-billing/dataset-schema/cost-usage-details-focus).
+
+**Explicit limits:** compares `BilledCost`, not amortized `EffectiveCost`. Periods use the month of `BillingPeriodStart`, not the consumption month. Billing cycles are not prorated or duration-normalized. Rows do not prove complete exports, finalized invoices or equivalent scopes. Missing charges do not prove resource deletion; a cost movement does not prove technical causality or realized savings. Tariff and exchange-rate changes are not inferred; quantity decomposition requires the additional evidence described above.
+
+### Online analysis integrity and operational safeguards
+
+High-risk actions and every `DELETE`/`CLEANUP` require the exact confirmation `CONFIRMO`. Refusal, empty input or EOF stops the script with exit code 1 before applying the action or continuing to subsequent resources; dry-run needs no confirmation. **Deletion has no automatic rollback:** `az resource show` saves metadata, not data backups or a deployable ARM template. Restore manually using validated data backups and original IaC; the plan no longer suggests deploying metadata JSON as a recovery mechanism.
+
+Summary, per-resource, tagged and history queries **automatically retrieve every page** indicated by `nextLink`, preserving the original query body and SDK authentication. Every request respects QPU pacing and HTTP 429 handling. No totals or coverage are cached/published if any page fails. Unexpected endpoints/subscriptions, repeated continuation tokens or incompatible columns fail explicitly rather than producing partial data or loops. Online consolidation rejects mixed currencies: use separate `--subscription` exports or the offline per-currency investigation. Individual detector failures remain visible as partial coverage in exported reports, `detect`/`recommend` warnings and `/api/summary`'s `warnings`. List APIs preserve their response shape and expose `X-Analysis-Partial`. Valid findings from other detectors are retained; no findings does not prove no waste.
+
+This first version accepts uncompressed CSVs totaling **50 MiB**, with up to 18 fractional and 30 integer digits per amount, including scientific notation within those limits. Invalid data fails the investigation rather than silently dropping charges. Identical files are rejected; repeated rows are retained with a warning because they can be legitimate. Rows outside the two selected periods are counted as excluded. Results are deterministic for the same files, input order and periods.
+
+HTML defaults to `azure-cost-investigation.html`; JSON goes to stdout unless `--output` is provided. Output files **never overwrite existing files** and use POSIX permissions `0600`. Review reports before sharing: they contain resource identifiers and financial values. Community bug reports should use the synthetic demo or an anonymized reproduction, never real invoices. The initial HTML investigation interface is in Brazilian Portuguese; JSON field names and CLI flags are in English.
 
 ## Features
 
+- **Spend worklist in the exported HTML:** service-specific review steps and every resource returned by billing, even without idle findings. Shows period and monthly costs, ownership when known, and an unreconciled difference against the consolidated total; missing prices are not invented and spend is not claimed as savings.
+- **Explicit collection coverage:** detector failures produce a partial-analysis warning in the CLI and report. SQL falls back to CPU when DTU is unsupported; missing metric samples are not converted into zero utilization. No findings does not certify efficiency.
+
+- **Offline FOCUS investigation**: exact per-currency billing-change breakdowns with source-line evidence and a credential-free synthetic demonstration
 - Azure Cost Management aggregation by service, resource group, location, or tags
 - Cost trend analysis, anomaly detection, and simple forecasting
 - Idle resource detection for VMs, App Services, **App Service Plans** (empty or underutilized), Storage, SQL, disks, public IPs, and load balancers

@@ -8,7 +8,13 @@ import type {
   CostSummary,
   CostTrend,
 } from '@/models';
-import { CostAnomalySchema, CostEntrySchema, CostForecastSchema, CostSummarySchema, CostTrendSchema } from '@/models';
+import {
+  CostAnomalySchema,
+  CostEntrySchema,
+  CostForecastSchema,
+  CostSummarySchema,
+  CostTrendSchema,
+} from '@/models';
 import { AzureClientService } from '@/services/azure-client';
 import { Cache } from '@/utils/cache';
 import { AzureApiError } from '@/utils/errors';
@@ -96,7 +102,8 @@ const addToBucket = (bucket: Record<string, number>, key: string, value: number)
   bucket[key] = (bucket[key] ?? 0) + value;
 };
 
-const formatMonth = (date: Date): string => `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+const formatMonth = (date: Date): string =>
+  `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
 
 /**
  * Queries Azure Cost Management and converts raw data into analyzable cost models.
@@ -126,57 +133,41 @@ export class CostAnalyzerService {
     }
 
     const scope = `/subscriptions/${subscriptionId}`;
-    const client = new CostManagementClient(
-      this.azureClient.getCredential(),
-    ) as unknown as CostQueryClient;
-
-    // Cost Management charges one QPU per month of data and enforces the budget per
-    // tenant, so pace the call before spending it rather than being throttled.
-    const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
-
     try {
-      await this.qpuLimiter.acquire(qpuCost);
-      const result = await this.azureClient.executeWithRetry(
-        async () => {
-          try {
-            return await client.query.usage(scope, {
-              type: 'ActualCost',
-              timeframe: 'Custom',
-              timePeriod: {
-                from: new Date(startDate),
-                to: new Date(endDate),
+      const result = await this.queryAllPages(
+        scope,
+        {
+          type: 'ActualCost',
+          timeframe: 'Custom',
+          timePeriod: {
+            from: new Date(startDate),
+            to: new Date(endDate),
+          },
+          dataset: {
+            // The summary only needs totals per dimension; daily granularity would
+            // multiply the payload without adding anything the report uses.
+            granularity: 'None',
+            aggregation: {
+              totalCost: {
+                name: 'PreTaxCost',
+                function: 'Sum',
               },
-              dataset: {
-                // The summary only needs totals per dimension; daily granularity would
-                // multiply the payload without adding anything the report uses.
-                granularity: 'None',
-                aggregation: {
-                  totalCost: {
-                    name: 'PreTaxCost',
-                    function: 'Sum',
-                  },
-                },
-                // The API accepts at most two groupings per query.
-                grouping: this.resolveGrouping(groupBy),
-              },
-            });
-          } catch (error: unknown) {
-            if (isThrottlingError(error)) {
-              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
-            }
-            throw error;
-          }
+            },
+            // The API accepts at most two groupings per query.
+            grouping: this.resolveGrouping(groupBy),
+          },
         },
-        // Throttling cool-downs are enforced per tenant and can span a full minute,
-        // so cost queries need a longer budget than a generic Azure call.
-        { maxAttempts: 8, maxDelayMs: 180_000 },
+        startDate,
+        endDate,
       );
 
       const summary = this.toSummary(result, startDate, endDate);
       this.cache.set(cacheKey, summary);
       return summary;
     } catch (error: unknown) {
-      this.logger.error('Azure cost query failed', { error: error instanceof Error ? error.message : 'unknown' });
+      this.logger.error('Azure cost query failed', {
+        error: error instanceof Error ? error.message : 'unknown',
+      });
       throw new AzureApiError(describeCostQueryFailure(error), getStatusCode(error) ?? 500, error);
     }
   }
@@ -201,45 +192,31 @@ export class CostAnalyzerService {
     }
 
     const scope = `/subscriptions/${subscriptionId}`;
-    const client = new CostManagementClient(
-      this.azureClient.getCredential(),
-    ) as unknown as CostQueryClient;
-
-    const qpuCost = QpuLimiter.estimateCost(startDate, endDate);
-
     try {
-      await this.qpuLimiter.acquire(qpuCost);
-      const result = await this.azureClient.executeWithRetry(
-        async () => {
-          try {
-            return await client.query.usage(scope, {
-              type: 'ActualCost',
-              timeframe: 'Custom',
-              timePeriod: {
-                from: new Date(startDate),
-                to: new Date(endDate),
+      const result = await this.queryAllPages(
+        scope,
+        {
+          type: 'ActualCost',
+          timeframe: 'Custom',
+          timePeriod: {
+            from: new Date(startDate),
+            to: new Date(endDate),
+          },
+          dataset: {
+            // Monthly granularity is what makes "it used to cost and no longer
+            // does" visible. Daily would multiply the payload for no extra insight.
+            granularity: 'Monthly',
+            aggregation: {
+              totalCost: {
+                name: 'PreTaxCost',
+                function: 'Sum',
               },
-              dataset: {
-                // Monthly granularity is what makes "it used to cost and no longer
-                // does" visible. Daily would multiply the payload for no extra insight.
-                granularity: 'Monthly',
-                aggregation: {
-                  totalCost: {
-                    name: 'PreTaxCost',
-                    function: 'Sum',
-                  },
-                },
-                grouping: [{ type: 'Dimension', name: 'ResourceId' }],
-              },
-            });
-          } catch (error: unknown) {
-            if (isThrottlingError(error)) {
-              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
-            }
-            throw error;
-          }
+            },
+            grouping: [{ type: 'Dimension', name: 'ResourceId' }],
+          },
         },
-        { maxAttempts: 8, maxDelayMs: 180_000 },
+        startDate,
+        endDate,
       );
 
       const ledger = this.toResourceLedger(result, startDate, endDate);
@@ -272,41 +249,35 @@ export class CostAnalyzerService {
     if (cached) return cached as TaggedCostEntry[];
 
     const scope = `/subscriptions/${subscriptionId}`;
-    const client = new CostManagementClient(
-      this.azureClient.getCredential(),
-    ) as unknown as CostQueryClient;
-
     try {
-      await this.qpuLimiter.acquire(QpuLimiter.estimateCost(startDate, endDate));
-      const result = await this.azureClient.executeWithRetry(
-        async () => {
-          try {
-            return await client.query.usage(scope, {
-              type: 'ActualCost',
-              timeframe: 'Custom',
-              timePeriod: { from: new Date(startDate), to: new Date(endDate) },
-              dataset: {
-                granularity: 'Monthly',
-                aggregation: { totalCost: { name: 'PreTaxCost', function: 'Sum' } },
-                grouping: [{ type: 'TagKey', name: tagKey }],
-                filter: { tags: { name: tagKey, operator: 'In', values } },
-              },
-            });
-          } catch (error: unknown) {
-            if (isThrottlingError(error)) this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
-            throw error;
-          }
+      const result = await this.queryAllPages(
+        scope,
+        {
+          type: 'ActualCost',
+          timeframe: 'Custom',
+          timePeriod: { from: new Date(startDate), to: new Date(endDate) },
+          dataset: {
+            granularity: 'Monthly',
+            aggregation: { totalCost: { name: 'PreTaxCost', function: 'Sum' } },
+            grouping: [{ type: 'TagKey', name: tagKey }],
+            filter: { tags: { name: tagKey, operator: 'In', values } },
+          },
         },
-        { maxAttempts: 8, maxDelayMs: 180_000 },
+        startDate,
+        endDate,
       );
 
-      if (!result) return [];
-      if (result.nextLink) {
-        throw new Error(`Cost Management truncated tag "${tagKey}" results; reduce --period or the number of metric rows for this tag.`);
-      }
-
       const columns = (result.columns ?? []).map((column) => column.name ?? '');
-      const excluded = new Set(['pretaxcost', 'cost', 'totalcost', 'usagedate', 'billingmonth', 'date', 'currency', 'billingcurrency']);
+      const excluded = new Set([
+        'pretaxcost',
+        'cost',
+        'totalcost',
+        'usagedate',
+        'billingmonth',
+        'date',
+        'currency',
+        'billingcurrency',
+      ]);
       const tagColumn = columns.find((column) => !excluded.has(column.toLowerCase()));
       if ((result.rows?.length ?? 0) > 0 && !tagColumn) {
         throw new Error(`Cost Management returned no tag-value column for "${tagKey}".`);
@@ -319,7 +290,9 @@ export class CostAnalyzerService {
         const amount = Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']));
         const currency = this.readColumn(row, columns, ['Currency', 'BillingCurrency']);
         if (!period || !tagValue || !Number.isFinite(amount) || !currency) {
-          throw new Error(`Cost Management returned an incomplete tagged-cost row for "${tagKey}".`);
+          throw new Error(
+            `Cost Management returned an incomplete tagged-cost row for "${tagKey}".`,
+          );
         }
         entries.push({ period, tagValue, amount, currency });
       }
@@ -344,9 +317,16 @@ export class CostAnalyzerService {
    * lowercased because Azure is inconsistent about their casing between the billing
    * and the management APIs, and a casing mismatch would look like a missing charge.
    */
-  private toResourceLedger(result: QueryResult, startDate: string, endDate: string): ResourceCostLedger {
+  private toResourceLedger(
+    result: QueryResult,
+    startDate: string,
+    endDate: string,
+  ): ResourceCostLedger {
     const columns = (result.columns ?? []).map((column) => column.name ?? '');
     const rows = result.rows ?? [];
+    this.assertSingleCurrency(
+      rows.map((row) => this.readColumn(row, columns, ['Currency', 'BillingCurrency']) ?? 'USD'),
+    );
     const resources: Record<string, Record<string, number>> = {};
     const months = new Set<string>();
     const coveredMonths = new Set<string>();
@@ -374,7 +354,9 @@ export class CostAnalyzerService {
         continue;
       }
 
-      const amount = Number(this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']) ?? 0);
+      const amount = Number(
+        this.readColumn(row, columns, ['PreTaxCost', 'Cost', 'totalCost']) ?? 0,
+      );
       if (!Number.isFinite(amount)) {
         continue;
       }
@@ -422,53 +404,46 @@ export class CostAnalyzerService {
    */
   public async getCostsByPeriod(months: number, subscriptionId?: string): Promise<CostEntry[]> {
     const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(0, months - 1), 1));
-    const client = new CostManagementClient(
-      this.azureClient.getCredential(),
-    ) as unknown as CostQueryClient;
-
+    const start = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - Math.max(0, months - 1), 1),
+    );
     try {
-      const qpuCost = QpuLimiter.estimateCost(start, now);
-      await this.qpuLimiter.acquire(qpuCost);
-      const result = await this.azureClient.executeWithRetry(
-        async () => {
-          try {
-            return await client.query.usage(`/subscriptions/${this.azureClient.getSubscriptionId(subscriptionId)}`, {
-              type: 'ActualCost',
-              timeframe: 'Custom',
-              timePeriod: {
-                from: start,
-                to: now,
+      const result = await this.queryAllPages(
+        `/subscriptions/${this.azureClient.getSubscriptionId(subscriptionId)}`,
+        {
+          type: 'ActualCost',
+          timeframe: 'Custom',
+          timePeriod: {
+            from: start,
+            to: now,
+          },
+          dataset: {
+            // Monthly buckets are enough for trend analysis and keep the payload small.
+            granularity: 'Monthly',
+            aggregation: {
+              totalCost: {
+                name: 'PreTaxCost',
+                function: 'Sum',
               },
-              dataset: {
-                // Monthly buckets are enough for trend analysis and keep the payload small.
-                granularity: 'Monthly',
-                aggregation: {
-                  totalCost: {
-                    name: 'PreTaxCost',
-                    function: 'Sum',
-                  },
-                },
-                // The API accepts at most two groupings per query.
-                grouping: [
-                  { type: 'Dimension', name: 'ServiceName' },
-                  { type: 'Dimension', name: 'ResourceGroup' },
-                ],
-              },
-            });
-          } catch (error: unknown) {
-            if (isThrottlingError(error)) {
-              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
-            }
-            throw error;
-          }
+            },
+            // The API accepts at most two groupings per query.
+            grouping: [
+              { type: 'Dimension', name: 'ServiceName' },
+              { type: 'Dimension', name: 'ResourceGroup' },
+            ],
+          },
         },
-        { maxAttempts: 8, maxDelayMs: 180_000 },
+        start.toISOString(),
+        now.toISOString(),
       );
 
       return this.toEntries(result);
     } catch (error: unknown) {
-      throw new AzureApiError('Failed to fetch cost history', 500, error);
+      throw new AzureApiError(
+        `Failed to fetch cost history: ${error instanceof Error ? error.message : 'unknown'}`,
+        500,
+        error,
+      );
     }
   }
 
@@ -487,7 +462,8 @@ export class CostAnalyzerService {
     const ordered = Array.from(byMonth.entries()).sort(([a], [b]) => a.localeCompare(b));
     return ordered.map(([period, amount], index) => {
       const previousAmount = ordered[index - 1]?.[1] ?? amount;
-      const percentChange = previousAmount === 0 ? 0 : ((amount - previousAmount) / previousAmount) * 100;
+      const percentChange =
+        previousAmount === 0 ? 0 : ((amount - previousAmount) / previousAmount) * 100;
       return CostTrendSchema.parse({ period, amount, percentChange });
     });
   }
@@ -499,6 +475,7 @@ export class CostAnalyzerService {
    * the actual monthly total).
    */
   public detectAnomalies(entries: CostEntry[]): CostAnomaly[] {
+    this.assertSingleCurrency(entries.map((entry) => entry.currency));
     const monthlyTotals = this.sumByKey(entries, (entry) => entry.date);
     const months = [...monthlyTotals.keys()].sort();
     if (months.length < 2) {
@@ -507,7 +484,8 @@ export class CostAnalyzerService {
 
     const amounts = months.map((month) => monthlyTotals.get(month) ?? 0);
     const average = amounts.reduce((sum, amount) => sum + amount, 0) / amounts.length;
-    const variance = amounts.reduce((sum, amount) => sum + (amount - average) ** 2, 0) / amounts.length;
+    const variance =
+      amounts.reduce((sum, amount) => sum + (amount - average) ** 2, 0) / amounts.length;
     const standardDeviation = Math.sqrt(variance);
 
     if (standardDeviation === 0) {
@@ -530,7 +508,12 @@ export class CostAnalyzerService {
 
         const rootCauses = [
           ...this.buildRootCauses('service', month, byServicePerMonth, amount - average),
-          ...this.buildRootCauses('resourceGroup', month, byResourceGroupPerMonth, amount - average),
+          ...this.buildRootCauses(
+            'resourceGroup',
+            month,
+            byResourceGroupPerMonth,
+            amount - average,
+          ),
         ];
 
         return {
@@ -602,7 +585,8 @@ export class CostAnalyzerService {
         const amountOnAnomalyDate = anomalyBucket.get(key) ?? 0;
         const averageAmount =
           otherMonths.length > 0
-            ? otherMonths.reduce((sum, [, bucket]) => sum + (bucket.get(key) ?? 0), 0) / otherMonths.length
+            ? otherMonths.reduce((sum, [, bucket]) => sum + (bucket.get(key) ?? 0), 0) /
+              otherMonths.length
             : 0;
         const deltaAmount = amountOnAnomalyDate - averageAmount;
         return { key, amountOnAnomalyDate, averageAmount, deltaAmount };
@@ -631,9 +615,10 @@ export class CostAnalyzerService {
     }
 
     const growthRates = trends.slice(1).map((trend) => trend.percentChange / 100);
-    const avgGrowth = growthRates.length > 0
-      ? growthRates.reduce((sum, rate) => sum + rate, 0) / growthRates.length
-      : 0;
+    const avgGrowth =
+      growthRates.length > 0
+        ? growthRates.reduce((sum, rate) => sum + rate, 0) / growthRates.length
+        : 0;
     const last = trends[trends.length - 1];
     if (!last) {
       return [];
@@ -643,11 +628,13 @@ export class CostAnalyzerService {
 
     for (let index = 1; index <= months; index += 1) {
       currentAmount = Math.max(0, currentAmount * (1 + avgGrowth));
-      const futureDate = new Date(Date.UTC(
-        Number.parseInt(last.period.slice(0, 4), 10),
-        Number.parseInt(last.period.slice(5, 7), 10) - 1 + index,
-        1,
-      ));
+      const futureDate = new Date(
+        Date.UTC(
+          Number.parseInt(last.period.slice(0, 4), 10),
+          Number.parseInt(last.period.slice(5, 7), 10) - 1 + index,
+          1,
+        ),
+      );
       forecasts.push(
         CostForecastSchema.parse({
           period: formatMonth(futureDate),
@@ -748,10 +735,122 @@ export class CostAnalyzerService {
     }
 
     if (skipped > 0) {
-      this.logger.warn('Ignoring cost rows that could not be parsed', { skipped, total: rows.length });
+      this.logger.warn('Ignoring cost rows that could not be parsed', {
+        skipped,
+        total: rows.length,
+      });
     }
 
+    this.assertSingleCurrency(entries.map((entry) => entry.currency));
     return entries;
+  }
+
+  private async queryAllPages(
+    scope: string,
+    parameters: Record<string, unknown>,
+    startDate: string,
+    endDate: string,
+  ): Promise<QueryResult> {
+    let continuationUrl: string | undefined;
+    // The SDK exposes no continuation parameter for Query. Reuse its serializer,
+    // authentication and transport, changing only the URL before each request.
+    const client = new CostManagementClient(this.azureClient.getCredential(), {
+      additionalPolicies: [
+        {
+          position: 'perCall',
+          policy: {
+            name: 'cost-query-continuation',
+            sendRequest: async (request, next) => {
+              if (continuationUrl) request.url = continuationUrl;
+              return next(request);
+            },
+          },
+        },
+      ],
+    }) as unknown as CostQueryClient;
+    const combined: QueryResult = { columns: [], rows: [] };
+    const seenTokens = new Set<string>();
+    let columnNames: string[] | undefined;
+    const endpoint = `https://management.azure.com${scope}/providers/Microsoft.CostManagement/query`;
+    do {
+      const page = await this.azureClient.executeWithRetry(
+        async () => {
+          await this.qpuLimiter.acquire(QpuLimiter.estimateCost(startDate, endDate));
+          try {
+            return await client.query.usage(scope, parameters);
+          } catch (error: unknown) {
+            if (isThrottlingError(error))
+              this.qpuLimiter.penalize(getRetryAfterMs(error) ?? 20_000);
+            throw error;
+          }
+        },
+        { maxAttempts: 8, maxDelayMs: 180_000 },
+      );
+      if (!page) {
+        if (continuationUrl)
+          throw new Error(
+            'Cost Management returned an empty continuation response; partial results were discarded.',
+          );
+        return combined;
+      }
+      const names = (page.columns ?? []).map((column) => column.name ?? '');
+      if (columnNames && JSON.stringify(names) !== JSON.stringify(columnNames)) {
+        throw new Error(
+          'Cost Management changed columns between pages; partial results were discarded.',
+        );
+      }
+      if (
+        (page.rows?.length ?? 0) > 0 &&
+        (names.length === 0 || page.rows!.some((row) => row.length !== names.length))
+      ) {
+        throw new Error(
+          'Cost Management returned malformed paginated rows; partial results were discarded.',
+        );
+      }
+      columnNames = names;
+      combined.columns = page.columns ?? [];
+      for (const row of page.rows ?? []) combined.rows!.push(row);
+      continuationUrl = undefined;
+      if (page.nextLink) {
+        let next: URL;
+        try {
+          next = new URL(page.nextLink, endpoint);
+        } catch {
+          throw new Error(
+            'Cost Management returned an invalid continuation link; partial results were discarded.',
+          );
+        }
+        const token = next.searchParams.get('$skiptoken');
+        if (
+          next.origin !== 'https://management.azure.com' ||
+          next.pathname.toLowerCase() !== new URL(endpoint).pathname.toLowerCase() ||
+          next.username ||
+          next.password ||
+          next.hash ||
+          !token
+        ) {
+          throw new Error(
+            'Cost Management returned an unsafe or unsupported continuation link; partial results were discarded.',
+          );
+        }
+        if (seenTokens.has(token)) {
+          throw new Error(
+            'Cost Management repeated a continuation token; partial results were discarded.',
+          );
+        }
+        seenTokens.add(token);
+        continuationUrl = next.href;
+      }
+    } while (continuationUrl);
+    return combined;
+  }
+
+  private assertSingleCurrency(currencies: string[]): void {
+    if (new Set(currencies).size > 1) {
+      throw new Error(
+        'Mixed billing currencies cannot be summed. Analyze subscriptions separately or use investigate for per-currency FOCUS reconciliation.',
+      );
+    }
   }
 
   /**

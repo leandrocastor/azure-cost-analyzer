@@ -72,4 +72,19 @@ describe.skipIf(!binaryExists)('CLI binary E2E (subprocess)', () => {
     expect(code).toBe(0);
     expect(stdout).toContain('Azure Cost Analyzer');
   });
+
+  it('runs the offline investigation demo without valid Azure configuration', () => {
+    const result = spawnSync(process.execPath, [binaryPath, 'investigate', '--demo', '--format', 'json'], {
+      encoding: 'utf8',
+      env: { ...process.env, AUTH_METHOD: 'invalid-for-offline-test', AZURE_SUBSCRIPTION_ID: '' },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      synthetic: true,
+      currencies: [
+        expect.objectContaining({ currency: 'BRL', delta: '830.00' }),
+        expect.objectContaining({ currency: 'USD', delta: '2.00' }),
+      ],
+    });
+  });
 });

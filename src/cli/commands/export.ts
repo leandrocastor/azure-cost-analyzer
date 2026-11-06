@@ -81,15 +81,13 @@ const addBucket = (target: Record<string, number>, source: Record<string, number
   }
 };
 
-const RESOURCE_SUBSCRIPTION_PATTERN = /\/subscriptions\/([^/]+)/i;
-
-const subscriptionIdFromResourceId = (resourceId: string): string | undefined =>
-  RESOURCE_SUBSCRIPTION_PATTERN.exec(resourceId)?.[1]?.toLowerCase();
-
 /**
  * Merges per-subscription cost summaries into a single tenant-wide summary.
  */
 const mergeCostSummaries = (summaries: CostSummary[]): CostSummary => {
+  if (new Set(summaries.map((summary) => summary.currency)).size > 1) {
+    throw new Error('Mixed billing currencies cannot be consolidated. Export each subscription separately with --subscription, or use investigate for per-currency FOCUS reconciliation.');
+  }
   const merged: CostSummary = {
     period: summaries[0]?.period ?? 'N/A',
     totalAmount: 0,
@@ -264,10 +262,6 @@ export default class ExportCommand extends Command {
         let analyzed = false;
         let subscriptionCostSucceeded = false;
         let subscriptionBillingCurrency: string | undefined;
-        const hasInitiativeResources = Boolean(initiatives?.some((initiative) =>
-          [...initiative.sourceResourceIds, ...initiative.destinationResourceIds]
-            .some((id) => subscriptionIdFromResourceId(id) === subscription.id.toLowerCase()),
-        ));
 
         // Requests are issued sequentially rather than in parallel: Azure Cost
         // Management and Monitor throttle aggressively, and bursting across several
@@ -324,6 +318,9 @@ export default class ExportCommand extends Command {
         let subscriptionFindings: IdleResource[] = [];
         try {
           subscriptionFindings = await resourceDetector.detectAll();
+          warnings.push(...(resourceDetector.getDetectionWarnings?.() ?? []).map(
+            (warning) => `${subscription.displayName}: ${warning}`,
+          ));
           analyzed = true;
         } catch (error: unknown) {
           warnings.push(
@@ -336,18 +333,9 @@ export default class ExportCommand extends Command {
         // saving on something billed at zero, such as an App Service on the F1 Free tier,
         // is what makes a finance audience discard the entire report.
         //
-        // Include resources from the baseline as well as current findings: resolved
-        // recommendations need a fresh per-resource invoice check before reporting impact.
-        const previousFindingsForSubscription =
-          previousSnapshot?.idleResources.filter(
-            (item) =>
-              subscriptionIdFromResourceId(item.resource.id) === subscription.id.toLowerCase() &&
-              (item.evidence?.billed?.coveredMonths?.length ?? 0) > 0,
-          ) ?? [];
-        if (
-          subscriptionCostSucceeded &&
-          (subscriptionFindings.length > 0 || previousFindingsForSubscription.length > 0 || hasInitiativeResources)
-        ) {
+        // Query billed resources even without idle findings: the worklist must
+        // explain spend outside the detector inventory as well.
+        if (subscriptionCostSucceeded) {
           spinner.text = `Fetching billed cost per resource for ${progress}`;
           try {
             const queriedLedger = await costAnalyzer.queryResourceCosts(
@@ -540,6 +528,7 @@ export default class ExportCommand extends Command {
         ownership,
         diff,
         subscriptionCount: analyzedSubscriptions.length,
+        warnings,
       });
 
       const html = generateStaticReport({
@@ -566,6 +555,8 @@ export default class ExportCommand extends Command {
         unitEconomics,
         maturityScore,
         anomalies,
+        resourceLedgers,
+        inventory,
       });
 
       const outputPath = path.resolve(flags.output ?? defaultOutputPath());
@@ -581,9 +572,12 @@ export default class ExportCommand extends Command {
         );
       }
 
-      spinner.succeed(
-        `Report generated at ${outputPath} (${analyzedSubscriptions.length} subscription${analyzedSubscriptions.length === 1 ? '' : 's'} analyzed)`,
-      );
+      const completion = `Report generated at ${outputPath} (${analyzedSubscriptions.length} subscription${analyzedSubscriptions.length === 1 ? '' : 's'} analyzed)`;
+      if (warnings.length > 0) {
+        spinner.warn(`${completion} — análise parcial: ${warnings.length} aviso(s); consulte a cobertura no relatório.`);
+      } else {
+        spinner.succeed(completion);
+      }
 
       for (const warning of warnings) {
         this.warn(warning);
