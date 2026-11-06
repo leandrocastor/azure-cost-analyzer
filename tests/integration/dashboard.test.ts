@@ -75,6 +75,26 @@ describe('dashboard routes', () => {
     expect(response.body.cashCapture.conditionalEstimateByCurrency).toEqual({});
   });
 
+  it('exposes partial detector coverage without changing existing list response shapes', async () => {
+    const partialApp = createDashboardApp({
+      subscriptionId: 'sub',
+      costAnalyzer: { queryCosts: vi.fn(async () => mockCostSummary) } as never,
+      resourceDetector: {
+        detectAll: vi.fn(async () => mockIdleResources),
+        getDetectionWarnings: () => ['Detector "Storage" indisponível: cobertura parcial.'],
+      } as never,
+      optimizer: { generateRecommendations: vi.fn(async () => mockRecommendations) } as never,
+    });
+    const summary = await request(partialApp).get('/api/summary');
+    expect(summary.body.warnings).toEqual([expect.stringContaining('Storage')]);
+    for (const endpoint of ['/api/resources/idle', '/api/recommendations']) {
+      const response = await request(partialApp).get(endpoint);
+      expect(response.status).toBe(200);
+      expect(Array.isArray(response.body)).toBe(true);
+      expect(response.headers['x-analysis-partial']).toBe('true');
+    }
+  });
+
   it('serves the dashboard frontend', async () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);

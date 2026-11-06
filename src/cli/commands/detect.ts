@@ -45,6 +45,7 @@ export default class DetectCommand extends Command {
         await this.detect(detector, flags['resource-type'] as ResourceTypeFlag)
       ).filter((item) => item.idleScore >= flags.threshold);
       spinner.succeed(`Detected ${detections.length} idle resources`);
+      for (const warning of detector.getDetectionWarnings?.() ?? []) this.warn(warning);
       this.log(this.render(detections, flags.format));
     } catch (error: unknown) {
       spinner.fail(error instanceof Error ? error.message : 'Detection failed');

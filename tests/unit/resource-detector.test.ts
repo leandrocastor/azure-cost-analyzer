@@ -243,6 +243,15 @@ describe('ResourceDetectorService', () => {
 
     expect(items).toHaveLength(1);
     expect(items[0]?.resource.name).toBe('disk-a');
+    expect(service.getDetectionWarnings()).toEqual([
+      expect.stringContaining('App Service Plans'),
+    ]);
+    const warnings = service.getDetectionWarnings();
+    warnings.length = 0;
+    expect(service.getDetectionWarnings()).toHaveLength(1);
+    appServicePlansListMock.mockReturnValue(iterable([]));
+    await service.detectAll();
+    expect(service.getDetectionWarnings()).toEqual([]);
   });
 
   it.each([
@@ -842,6 +851,35 @@ describe('ResourceDetectorService', () => {
       const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases();
 
       expect(items).toHaveLength(0);
+    });
+
+    it('uses CPU when Azure rejects the DTU metric for a vCore database', async () => {
+      sqlServersListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql', name: 'sql' }]));
+      sqlDatabasesListByServerMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql/databases/db', name: 'db' }]));
+      metricsListMock.mockImplementation(async (_id: string, options: { metricnames?: string }) => {
+        if (options.metricnames === 'dtu_consumption_percent') {
+          throw Object.assign(new Error('Failed to find metric configuration for provider: Microsoft.Sql'), { statusCode: 400 });
+        }
+        return series('cpu_percent', 2);
+      });
+      const items = await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases();
+      expect(items).toHaveLength(1);
+      expect(items[0]?.reason).toContain('CPU');
+    });
+
+    it.each([403, 429, 500])('does not hide SQL authorization, throttle or service failures (%s)', async (statusCode) => {
+      sqlServersListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql', name: 'sql' }]));
+      sqlDatabasesListByServerMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql/databases/db', name: 'db' }]));
+      metricsListMock.mockRejectedValue(Object.assign(new Error('Azure unavailable'), { statusCode }));
+      await expect(new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases()).rejects.toBeInstanceOf(AzureApiError);
+      expect(metricsListMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not convert timestamp-only metric points into zero utilization', async () => {
+      sqlServersListMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql', name: 'sql' }]));
+      sqlDatabasesListByServerMock.mockReturnValue(iterable([{ id: '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Sql/servers/sql/databases/db', name: 'db' }]));
+      metricsListMock.mockResolvedValue({ value: [{ timeseries: [{ data: Array.from({ length: 5 }, () => ({ timestamp: new Date() })) }] }] });
+      expect(await new ResourceDetectorService(azureClient as never, undefined, offlinePricing()).detectIdleSqlDatabases()).toEqual([]);
     });
 
     it('reports the provisioning state the SDK returns at the top level', async () => {

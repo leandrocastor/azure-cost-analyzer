@@ -35,6 +35,7 @@ export default class RecommendCommand extends Command {
     const optimizer = new OptimizerService();
     const riskOrder: Record<'low' | 'medium' | 'high', number> = { low: 1, medium: 2, high: 3 };
     const idleResources = await detector.detectAll();
+    for (const warning of detector.getDetectionWarnings?.() ?? []) this.warn(warning);
     const recommendations = (await optimizer.generateRecommendations(idleResources))
       .filter((item) => item.monthlySavings >= flags['min-savings'])
       .filter(

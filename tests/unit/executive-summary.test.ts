@@ -42,7 +42,7 @@ describe('ExecutiveSummaryService', () => {
   it('writes a headline with the recoverable annual savings', async () => {
     const summary = service.build(await buildInput());
 
-    expect(summary.headline).toMatch(/desperdício recuperável/i);
+    expect(summary.headline).toMatch(/oportunidades estimadas/i);
     expect(summary.generatedBy).toBe('heuristic');
     expect(summary.paragraphs.length).toBeGreaterThan(0);
   });
@@ -57,6 +57,13 @@ describe('ExecutiveSummaryService', () => {
     );
 
     expect(summary.headline).toMatch(/nenhum desperdício relevante/i);
+    expect(summary.headline).toContain('não comprova');
+    expect(summary.headline).not.toContain('O ambiente está aderente');
+  });
+
+  it('does not certify efficiency when data collection is partial', async () => {
+    const summary = service.build(await buildInput({ warnings: ['SQL unavailable'] }));
+    expect(summary.headline).toContain('Análise parcial');
   });
 
   it('names the service that concentrates the highest spend', async () => {

@@ -313,6 +313,9 @@
             fetchJSON('/api/recommendations'),
             fetchJSON('/api/costs?period=1&groupBy=service'),
           ]);
+          if (summary.warnings && summary.warnings.length) {
+            showError('Partial analysis: ' + summary.warnings.join(' '));
+          }
 
           renderKPI('kpi-cost', fmt(summary.totalCost), 'Month-to-date');
           renderKPI('kpi-idle', String(summary.idleResourceCount), 'Resources with low utilization');

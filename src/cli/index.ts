@@ -7,6 +7,7 @@ import CostsCommand from '@/cli/commands/costs';
 import DashboardCommand from '@/cli/commands/dashboard';
 import DetectCommand from '@/cli/commands/detect';
 import ExportCommand from '@/cli/commands/export';
+import InvestigateCommand from '@/cli/commands/investigate';
 import RecommendCommand from '@/cli/commands/recommend';
 
 type CommandConstructor =
@@ -14,6 +15,7 @@ type CommandConstructor =
   | typeof DashboardCommand
   | typeof DetectCommand
   | typeof ExportCommand
+  | typeof InvestigateCommand
   | typeof RecommendCommand;
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8')) as { version: string };
@@ -23,6 +25,7 @@ const commands: Record<string, CommandConstructor> = {
   dashboard: DashboardCommand,
   detect: DetectCommand,
   export: ExportCommand,
+  investigate: InvestigateCommand,
   recommend: RecommendCommand,
 };
 
@@ -36,6 +39,7 @@ Commands:
   recommend   Generate prioritized savings recommendations
   dashboard   Start the dashboard server
   export      Export a static HTML report (no server required)
+  investigate Explain FOCUS billing changes offline (try --demo; no Azure login)
 
 Options:
   --help, -h      Show this help message

@@ -7,10 +7,29 @@
 3. Copy `.env.example` to `.env` and configure Azure access.
 4. Run `npm run lint`, `npm run test`, and `npm run build` before opening a pull request.
 
+Azure credentials are not required to develop or try the offline investigation:
+
+```bash
+npm install
+node dist/cli/index.js investigate --demo --output ./investigation-demo.html
+npm test -- tests/unit/cost-investigation.test.ts tests/unit/investigate-command.test.ts
+```
+
+For billing-investigation contributions, add a small synthetic CSV case with expected
+balances and source-line references in `tests/unit/cost-investigation.test.ts`.
+Preserve credits, unallocated charges and separate currencies. Each breakdown must
+reconcile to the same per-currency change. Do not equate missing rows with resource
+deletion or cost changes with proven savings. Never attach real billing exports,
+credentials, contact details or customer identifiers to issues or test fixtures.
+
 The build uses the live `ts-patch` compiler (`tspc`) with `typescript-transform-paths`
 to resolve `@/` aliases in JavaScript and declaration files during emission.
 Use `npm run build`, not plain `tsc`, to produce runnable artifacts. Keep both
 transformer entries in `tsconfig.json`; `npm run typecheck` remains a no-emit check.
+
+The targeted `minimatch` override replaces vulnerable versions 7 through 11.0.0 with
+11.0.5 or newer while leaving legacy v3 consumers unchanged. Recheck the CLI,
+lint and transformer build when updating its consumers or removing the override.
 
 ## Testing requirements
 

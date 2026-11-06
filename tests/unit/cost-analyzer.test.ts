@@ -6,6 +6,8 @@ import { QpuLimiter } from '@/utils/qpu-limiter';
 import { mockCostEntries } from '../fixtures/mock-data';
 
 const usageMock = vi.fn();
+const nextLink = (token: string): string =>
+  `https://management.azure.com/subscriptions/sub/providers/Microsoft.CostManagement/query?api-version=2025-03-01&$skiptoken=${encodeURIComponent(token)}`;
 
 vi.mock('@azure/arm-costmanagement', () => ({
   CostManagementClient: vi.fn(function () {
@@ -37,7 +39,14 @@ describe('CostAnalyzerService', () => {
 
   it('queries summarized costs', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'ResourceLocation' },
+      ],
       rows: [
         [100, '2026-01-01', 'USD', 'Compute', 'rg-a', 'eastus'],
         [50, '2026-01-02', 'USD', 'Storage', 'rg-b', 'westus'],
@@ -69,9 +78,71 @@ describe('CostAnalyzerService', () => {
     expect(usageMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['summary', 'resources', 'history'])(
+    'refuses unsafe continuation links in %s without caching partial coverage',
+    async (kind) => {
+      usageMock.mockResolvedValue({
+        columns: [{ name: 'PreTaxCost' }, { name: 'Currency' }],
+        rows: [[100, 'USD']],
+        nextLink: 'https://example.invalid/next',
+      });
+      const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+      const query = (): Promise<unknown> =>
+        kind === 'summary'
+          ? service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')
+          : kind === 'resources'
+            ? service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')
+            : service.getCostsByPeriod(1);
+      await expect(query()).rejects.toThrow('continuation link');
+      await expect(query()).rejects.toThrow('continuation link');
+      expect(usageMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(['summary', 'resources', 'history'])(
+    'refuses mixed currencies in %s, including unallocated rows',
+    async (kind) => {
+      usageMock.mockResolvedValue({
+        columns: [
+          { name: 'PreTaxCost' },
+          { name: 'UsageDate' },
+          { name: 'Currency' },
+          { name: 'ResourceId' },
+        ],
+        rows: [
+          [100, '2026-01-01', 'USD', '/subscriptions/sub/vm'],
+          [90, '2026-01-01', 'BRL', ''],
+        ],
+      });
+      const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+      const result =
+        kind === 'summary'
+          ? service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')
+          : kind === 'resources'
+            ? service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')
+            : service.getCostsByPeriod(1);
+      await expect(result).rejects.toThrow('Mixed billing currencies');
+    },
+  );
+
+  it('refuses anomaly aggregation across subscriptions with different currencies', () => {
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    expect(() =>
+      service.detectAnomalies([
+        { ...mockCostEntries[0]!, currency: 'USD' },
+        { ...mockCostEntries[1]!, currency: 'BRL' },
+      ]),
+    ).toThrow('Mixed billing currencies');
+  });
+
   it('includes zero-charge months in resource ledger coverage', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'ResourceId' }, { name: 'Currency' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'ResourceId' },
+        { name: 'Currency' },
+      ],
       rows: [[25, '2026-02-01', '/subscriptions/sub/disks/disk-a', 'BRL']],
     });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
@@ -85,33 +156,210 @@ describe('CostAnalyzerService', () => {
 
   it('queries actual monthly costs grouped by the requested historical tag', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'TagValue' }, { name: 'UsageDate' }, { name: 'Currency' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'TagValue' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+      ],
       rows: [[123.45, 'checkout', 202609, 'BRL']],
     });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
 
-    const result = await service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', ['checkout']);
+    const result = await service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', [
+      'checkout',
+    ]);
 
-    expect(result).toEqual([{ period: '2026-09', tagValue: 'checkout', amount: 123.45, currency: 'BRL' }]);
-    expect(usageMock).toHaveBeenCalledWith('/subscriptions/sub', expect.objectContaining({
-      dataset: expect.objectContaining({
-        granularity: 'Monthly',
-        grouping: [{ type: 'TagKey', name: 'app' }],
-        filter: { tags: { name: 'app', operator: 'In', values: ['checkout'] } },
+    expect(result).toEqual([
+      { period: '2026-09', tagValue: 'checkout', amount: 123.45, currency: 'BRL' },
+    ]);
+    expect(usageMock).toHaveBeenCalledWith(
+      '/subscriptions/sub',
+      expect.objectContaining({
+        dataset: expect.objectContaining({
+          granularity: 'Monthly',
+          grouping: [{ type: 'TagKey', name: 'app' }],
+          filter: { tags: { name: 'app', operator: 'In', values: ['checkout'] } },
+        }),
       }),
-    }));
+    );
   });
 
-  it('fails explicitly when tagged billing results are truncated', async () => {
-    usageMock.mockResolvedValue({ columns: [], rows: [], nextLink: 'https://example.invalid/next' });
+  it('fails explicitly when tagged billing continuation links are unsafe', async () => {
+    usageMock.mockResolvedValue({
+      columns: [],
+      rows: [],
+      nextLink: 'https://example.invalid/next',
+    });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
-    await expect(service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', ['checkout']))
-      .rejects.toThrow('Cost Management truncated tag "app" results');
+    await expect(
+      service.queryCostsByTag('sub', '2026-08-01', '2026-10-16', 'app', ['checkout']),
+    ).rejects.toThrow('continuation link');
+  });
+
+  it.each(['summary', 'resources', 'history', 'tags'])(
+    'collects all pages for %s queries',
+    async (kind) => {
+      const columns = [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+        { name: kind === 'tags' ? 'TagValue' : 'ResourceId' },
+      ];
+      const pageRow = (amount: number): unknown[] => [
+        amount,
+        '2026-01-01',
+        'USD',
+        kind === 'tags' ? 'checkout' : '/subscriptions/sub/vm',
+      ];
+      usageMock
+        .mockResolvedValueOnce({ columns, rows: [pageRow(100)], nextLink: nextLink('page+2/=') })
+        .mockResolvedValueOnce({ columns, rows: [pageRow(-10)], nextLink: nextLink('page3') })
+        .mockResolvedValueOnce({ columns, rows: [pageRow(25)] });
+      const limiter = new QpuLimiter({ windows: [], sleep: async () => undefined });
+      const acquire = vi.spyOn(limiter, 'acquire');
+      azureClient.getSubscriptionId.mockReturnValueOnce('sub');
+      const service = new CostAnalyzerService(azureClient as never, limiter);
+      if (kind === 'summary') {
+        expect(
+          (await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).totalAmount,
+        ).toBe(115);
+        await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service');
+      } else if (kind === 'resources') {
+        expect(
+          (await service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')).resources[
+            '/subscriptions/sub/vm'
+          ],
+        ).toEqual({ '2026-01': 115 });
+        await service.queryResourceCosts('sub', '2026-01-01', '2026-01-31');
+      } else if (kind === 'history') {
+        expect((await service.getCostsByPeriod(1)).map((row) => row.amount)).toEqual([
+          100, -10, 25,
+        ]);
+      } else {
+        expect(
+          (
+            await service.queryCostsByTag('sub', '2026-01-01', '2026-01-31', 'app', ['checkout'])
+          ).map((row) => row.amount),
+        ).toEqual([100, -10, 25]);
+        await service.queryCostsByTag('sub', '2026-01-01', '2026-01-31', 'app', ['checkout']);
+      }
+      expect(usageMock).toHaveBeenCalledTimes(3);
+      expect(acquire).toHaveBeenCalledTimes(3);
+      expect(usageMock.mock.calls[1]).toEqual(usageMock.mock.calls[0]);
+      expect(usageMock.mock.calls[2]).toEqual(usageMock.mock.calls[0]);
+    },
+  );
+
+  it('detects repeated continuation tokens instead of looping or double counting', async () => {
+    usageMock.mockResolvedValue({
+      columns: [{ name: 'PreTaxCost' }],
+      rows: [[10]],
+      nextLink: nextLink('repeat'),
+    });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    await expect(service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')).rejects.toThrow(
+      'repeated a continuation token',
+    );
+    expect(usageMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    'https://other.invalid/subscriptions/sub/providers/Microsoft.CostManagement/query?$skiptoken=x',
+    'http://management.azure.com/subscriptions/sub/providers/Microsoft.CostManagement/query?$skiptoken=x',
+    'https://management.azure.com/subscriptions/other/providers/Microsoft.CostManagement/query?$skiptoken=x',
+    'https://management.azure.com/subscriptions/sub/providers/Microsoft.CostManagement/query',
+    'https://user:password@management.azure.com/subscriptions/sub/providers/Microsoft.CostManagement/query?$skiptoken=x',
+    'https://management.azure.com/subscriptions/sub/providers/Microsoft.CostManagement/query?$skiptoken=x#fragment',
+    'https://[',
+  ])('does not request untrusted or unusable nextLink %s', async (link) => {
+    usageMock.mockResolvedValue({ columns: [], rows: [], nextLink: link });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    await expect(service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')).rejects.toThrow(
+      'continuation link',
+    );
+    expect(usageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    undefined,
+    { columns: [{ name: 'Currency' }, { name: 'PreTaxCost' }], rows: [['USD', 2]] },
+    { columns: [{ name: 'PreTaxCost' }, { name: 'Currency' }], rows: [[2]] },
+  ])(
+    'discards all results if a later page is absent or has an inconsistent schema',
+    async (secondPage) => {
+      usageMock
+        .mockResolvedValueOnce({
+          columns: [{ name: 'PreTaxCost' }, { name: 'Currency' }],
+          rows: [[10, 'USD']],
+          nextLink: nextLink('next'),
+        })
+        .mockResolvedValueOnce(secondPage);
+      const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+      await expect(service.queryResourceCosts('sub', '2026-01-01', '2026-01-31')).rejects.toThrow(
+        'partial results were discarded',
+      );
+    },
+  );
+
+  it('does not cache a first page when a later request fails', async () => {
+    const first = { columns: [{ name: 'PreTaxCost' }], rows: [[10]], nextLink: nextLink('next') };
+    usageMock
+      .mockResolvedValueOnce(first)
+      .mockRejectedValueOnce(new Error('Second page unavailable'))
+      .mockResolvedValueOnce({ columns: [{ name: 'PreTaxCost' }], rows: [[20]] });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(
+      'Second page unavailable',
+    );
+    expect(
+      (await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).totalAmount,
+    ).toBe(20);
+    expect(usageMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('accepts a relative continuation link and an empty final page with the same columns', async () => {
+    const columns = [{ name: 'PreTaxCost' }, { name: 'Currency' }];
+    usageMock
+      .mockResolvedValueOnce({
+        columns,
+        rows: [[12, 'USD']],
+        nextLink:
+          '/subscriptions/sub/providers/Microsoft.CostManagement/query?api-version=2025-03-01&$skiptoken=relative',
+      })
+      .mockResolvedValueOnce({ columns, rows: [] });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    expect(
+      (await service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).totalAmount,
+    ).toBe(12);
+    expect(usageMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('still rejects mixed currencies when each page has only a single currency', async () => {
+    const columns = [{ name: 'PreTaxCost' }, { name: 'Currency' }];
+    usageMock
+      .mockResolvedValueOnce({
+        columns,
+        rows: [[10, 'USD']],
+        nextLink: nextLink('other-currency'),
+      })
+      .mockResolvedValueOnce({ columns, rows: [[12, 'BRL']] });
+    const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
+    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(
+      'Mixed billing currencies',
+    );
   });
 
   it('retrieves costs by period', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'ResourceLocation' },
+      ],
       rows: [[75, '2026-01-01', 'USD', 'Compute', 'rg-a', 'eastus']],
     });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
@@ -122,7 +370,14 @@ describe('CostAnalyzerService', () => {
 
   it('analyzes month over month trends', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'ResourceLocation' },
+      ],
       rows: [
         [100, '2026-01-01', 'USD', 'Compute', 'rg-a', 'eastus'],
         [200, '2026-02-01', 'USD', 'Compute', 'rg-a', 'eastus'],
@@ -185,7 +440,13 @@ describe('CostAnalyzerService', () => {
 
   it('attributes the anomaly to the service and resource group that drove it', () => {
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
-    const baseline = { currency: 'USD', service: 'Compute', resourceGroup: 'rg-a', location: 'eastus', tags: {} };
+    const baseline = {
+      currency: 'USD',
+      service: 'Compute',
+      resourceGroup: 'rg-a',
+      location: 'eastus',
+      tags: {},
+    };
     const anomalies = service.detectAnomalies([
       { ...baseline, date: '2026-01', amount: 100 },
       { ...baseline, date: '2026-02', amount: 110 },
@@ -197,7 +458,15 @@ describe('CostAnalyzerService', () => {
       { ...baseline, date: '2026-08', amount: 103 },
       { ...baseline, date: '2026-09', amount: 101 },
       // Spike concentrated entirely in "Storage"/"rg-b": the report must point there.
-      { date: '2026-10', amount: 300, currency: 'USD', service: 'Storage', resourceGroup: 'rg-b', location: 'westus', tags: {} },
+      {
+        date: '2026-10',
+        amount: 300,
+        currency: 'USD',
+        service: 'Storage',
+        resourceGroup: 'rg-b',
+        location: 'westus',
+        tags: {},
+      },
     ]);
 
     expect(anomalies).toHaveLength(1);
@@ -209,7 +478,14 @@ describe('CostAnalyzerService', () => {
 
   it('forecasts future costs', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'UsageDate' }, { name: 'Currency' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'ResourceLocation' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'UsageDate' },
+        { name: 'Currency' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'ResourceLocation' },
+      ],
       rows: [
         [100, '2026-01-01', 'USD', 'Compute', 'rg-a', 'eastus'],
         [120, '2026-02-01', 'USD', 'Compute', 'rg-a', 'eastus'],
@@ -231,7 +507,9 @@ describe('CostAnalyzerService', () => {
   it('wraps SDK failures with AzureApiError in queryCosts', async () => {
     usageMock.mockRejectedValue(new Error('boom'));
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
-    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toBeInstanceOf(AzureApiError);
+    await expect(
+      service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service'),
+    ).rejects.toBeInstanceOf(AzureApiError);
   });
 
   it('wraps SDK failures with AzureApiError in getCostsByPeriod', async () => {
@@ -249,14 +527,20 @@ describe('CostAnalyzerService', () => {
     usageMock.mockResolvedValue({ columns: [], rows: [] });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
     await service.queryCosts('sub', '2026-01-01', '2026-01-31', groupBy as 'service');
-    const grouping = (usageMock.mock.calls[0]?.[1] as { dataset: { grouping: { name: string }[] } }).dataset.grouping;
+    const grouping = (usageMock.mock.calls[0]?.[1] as { dataset: { grouping: { name: string }[] } })
+      .dataset.grouping;
     expect(grouping[0]).toEqual({ type: 'Dimension', name: dimension });
     expect(grouping.length).toBeLessThanOrEqual(2);
   });
 
   it('omits dimensions that were not part of the query instead of inventing buckets', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'Currency' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'Currency' },
+      ],
       rows: [[100, 'Compute', 'rg-a', 'BRL']],
     });
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
@@ -272,14 +556,18 @@ describe('CostAnalyzerService', () => {
     usageMock.mockRejectedValue(new Error('Too many requests. Please retry.'));
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
 
-    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(/Cost Management/);
+    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(
+      /Cost Management/,
+    );
   });
 
   it('explains missing permissions instead of a generic failure', async () => {
     usageMock.mockRejectedValue(Object.assign(new Error('denied'), { statusCode: 403 }));
     const service = new CostAnalyzerService(azureClient as never, qpuLimiter);
 
-    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(/Cost Management Reader/);
+    await expect(service.queryCosts('sub', '2026-01-01', '2026-01-31', 'service')).rejects.toThrow(
+      /Cost Management Reader/,
+    );
   });
 
   it('requests at most two groupings so the API accepts the query', async () => {
@@ -294,7 +582,12 @@ describe('CostAnalyzerService', () => {
 
   it('keeps charges that Azure returns without a resource group', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'Currency' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'Currency' },
+      ],
       rows: [
         [100, 'Compute', 'rg-a', 'BRL'],
         [25, 'Support', '', 'BRL'],
@@ -311,7 +604,12 @@ describe('CostAnalyzerService', () => {
 
   it('keeps credits reported as negative charges', async () => {
     usageMock.mockResolvedValue({
-      columns: [{ name: 'PreTaxCost' }, { name: 'ServiceName' }, { name: 'ResourceGroup' }, { name: 'Currency' }],
+      columns: [
+        { name: 'PreTaxCost' },
+        { name: 'ServiceName' },
+        { name: 'ResourceGroup' },
+        { name: 'Currency' },
+      ],
       rows: [
         [100, 'Compute', 'rg-a', 'BRL'],
         [-30, 'Refund', 'rg-a', 'BRL'],

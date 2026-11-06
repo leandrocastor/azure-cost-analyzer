@@ -106,6 +106,9 @@ describe('RemediationService', () => {
     expect(plan?.apply[0]?.command).toContain('az resource show');
     expect(plan?.apply[1]?.command).toContain('az resource delete');
     expect(plan?.requiresDowntime).toBe(true);
+    expect(plan?.apply[0]?.description).toContain('não é backup');
+    expect(plan?.rollback[0]?.description).toContain('Não há rollback automático');
+    expect(plan?.rollback[0]?.command).not.toContain('az deployment');
   });
 
   it('marks scheduling as a non-destructive action with an auto-shutdown command', () => {
@@ -153,10 +156,50 @@ describe('RemediationService', () => {
     expect(script).toContain('Digite CONFIRMO para continuar');
   });
 
+  it.each(['NAO\n', '\n', ''])('never applies a high-risk plan after refusal or EOF (%j)', (input) => {
+    const [plan] = service.buildPlans([recommendationFor({ actionType: 'DELETE', risk: 'high' })], []);
+    const safePlan = {
+      ...plan!,
+      preChecks: [],
+      apply: [{ description: 'Harmless marker', command: "printf 'APPLIED_MARKER\\n'" }],
+    };
+    try {
+      execFileSync('bash', ['-c', service.buildApplyScript([safePlan])], {
+        input, encoding: 'utf8', env: { ...process.env, APPLY: 'true', ONLY: '' },
+      });
+      expect.fail('Refusal must stop the script');
+    } catch (error: unknown) {
+      const failure = error as { status: number; stdout: string };
+      expect(failure.status).toBe(1);
+      expect(failure.stdout).toContain('confirmação não concedida');
+      expect(failure.stdout).not.toContain('APPLIED_MARKER');
+    }
+  });
+
+  it.each([
+    ['true', 'CONFIRMO\n', true],
+    ['false', '', false],
+  ])('only executes a confirmed high-risk plan in apply mode %s', (apply, input, executed) => {
+    const [plan] = service.buildPlans([recommendationFor({ actionType: 'DELETE', risk: 'high' })], []);
+    const script = service.buildApplyScript([{
+      ...plan!, preChecks: [],
+      apply: [{ description: 'Harmless marker', command: "printf 'CONFIRMED_MARKER\\n'" }],
+    }]);
+    const output = execFileSync('bash', ['-c', script], {
+      input, encoding: 'utf8', env: { ...process.env, APPLY: apply, ONLY: '' },
+    });
+    expect(output.split('\n').includes('CONFIRMED_MARKER')).toBe(executed);
+  });
+
   it('does not require confirmation for low-risk actions', () => {
     const plans = service.buildPlans([recommendationFor({ risk: 'low' })], []);
 
     expect(service.buildApplyScript(plans)).not.toContain('CONFIRMO');
+  });
+
+  it.each(['DELETE', 'CLEANUP'] as const)('also requires confirmation for destructive %s classified as low risk', (actionType) => {
+    const plans = service.buildPlans([recommendationFor({ risk: 'low', actionType })], []);
+    expect(service.buildApplyScript(plans)).toContain('Digite CONFIRMO');
   });
 
   it('produces an empty-but-valid script when there is nothing to remediate', () => {
